@@ -1,0 +1,4 @@
+pymodbus
+python-dotenv
+EdgeSync360-EdgeHub-Edge-Python-SDK
+azure-iot-device

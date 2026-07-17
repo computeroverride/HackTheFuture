@@ -29,13 +29,13 @@ def main() -> None:
             settings=settings,
         )
 
-        product_detector = ProductDetectorAI2(
+        thermistor_ai2 = ProductDetectorAI2(
             adam=adam,
             settings=settings,
             detect_threshold_voltage=1.0,
         )
 
-        camera_photocell = CameraPhotocellAI4(
+        conveyor_photocell = CameraPhotocellAI4(
             adam=adam,
             settings=settings,
             detect_threshold_voltage=0.3,
@@ -63,42 +63,65 @@ def main() -> None:
 
         print()
         print("Testing all services one by one.")
-        print("This test will only READ values first.")
-        print("It will NOT turn on fan or buzzer.")
+        print("Motor sound AI0 will control Fan DO0.")
+        print("Camera station is left blank for future code.")
         print("Press Ctrl+C to stop.")
         print()
 
         while True:
             # ------------------------------------------------
-            # Entry zone
+            # ENTRY ZONE
+            # Button gives product ID.
             # ------------------------------------------------
 
             product_id = entry_button.get_product_id_if_pressed()
             button_pressed = entry_button.read_button()
 
             # ------------------------------------------------
-            # Conveyor belt
+            # THERMISTOR
+            # AI2 reading.
             # ------------------------------------------------
 
-            ai2_voltage = product_detector.read_voltage()
-            product_detected = product_detector.is_product_detected()
-
-            ai4_voltage = camera_photocell.read_voltage()
-            at_camera_station = camera_photocell.is_at_camera_station()
+            ai2_voltage = thermistor_ai2.read_voltage()
+            ai2_detected = thermistor_ai2.is_product_detected()
 
             # ------------------------------------------------
-            # Motor area
+            # CONVEYOR BELT
+            # Photocell AI4 reading.
+            # ------------------------------------------------
+
+            ai4_voltage = conveyor_photocell.read_voltage()
+            conveyor_detected = (
+                conveyor_photocell.is_at_camera_station()
+            )
+
+            # ------------------------------------------------
+            # CAMERA STATION
+            # Blank for future ML / camera code.
+            # ------------------------------------------------
+
+            camera_station_status = "NOT CODED YET"
+
+            # ------------------------------------------------
+            # MOTOR AREA
+            # Sound sensor controls fan.
             # ------------------------------------------------
 
             sound_voltage = motor_sound.read_sound_value()
-            motor_loud = motor_sound.is_motor_loud(
+
+            motor_sound_active = motor_sound.is_motor_loud(
                 threshold_voltage=0.2,
             )
+
+            if motor_sound_active:
+                fan_relay.turn_on()
+            else:
+                fan_relay.turn_off()
 
             fan_on = fan_relay.is_on()
 
             # ------------------------------------------------
-            # Others
+            # OTHERS
             # ------------------------------------------------
 
             crash_detected = crash_sensor.is_crash_detected()
@@ -116,21 +139,26 @@ def main() -> None:
 
             print()
 
+            print("THERMISTOR")
+            print(f"AI2 voltage: {ai2_voltage:.3f} V")
+            print(f"AI2 detected / above threshold: {ai2_detected}")
+
+            print()
+
             print("CONVEYOR BELT")
-            print(f"AI2 product sensor voltage: {ai2_voltage:.3f} V")
-            print(f"Product detected by AI2: {product_detected}")
+            print(f"Photocell AI4 voltage: {ai4_voltage:.3f} V")
+            print(f"Conveyor belt detected: {conveyor_detected}")
 
             print()
 
             print("CAMERA STATION")
-            print(f"Photocell AI4 voltage: {ai4_voltage:.3f} V")
-            print(f"Product at camera station: {at_camera_station}")
+            print(f"Status: {camera_station_status}")
 
             print()
 
             print("MOTOR AREA")
             print(f"Sound AI0 voltage: {sound_voltage:.3f} V")
-            print(f"Motor sound active: {motor_loud}")
+            print(f"Motor sound active: {motor_sound_active}")
             print(f"Fan relay DO0 is ON: {fan_on}")
 
             print()
@@ -149,6 +177,13 @@ def main() -> None:
         print("Stopped by user.")
 
     finally:
+        # Safety: turn fan off when this test stops.
+        try:
+            fan_relay.turn_off()
+            print("Fan DO0 turned OFF.")
+        except Exception:
+            pass
+
         adam.close()
         print("Connection closed.")
 

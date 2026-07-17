@@ -2,3 +2,8 @@ pymodbus
 python-dotenv
 EdgeSync360-EdgeHub-Edge-Python-SDK
 azure-iot-device
+opencv-python
+torch
+torchvision
+Pillow
+numpy

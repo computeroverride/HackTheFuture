@@ -16,7 +16,6 @@ from edgesync360edgehubedgesdk.Model.Edge import (
     NodeConfig,
     TextTagConfig,
 )
-
 from edgesync360edgehubedgesdk.Model.MQTTMessage import (
     ConnectMessage,
     DisconnectMessage,
@@ -27,24 +26,14 @@ from app.settings import Settings
 
 
 class EdgeHubPublisher:
-    """
-    Publishes EdgeHub SCADA protocol messages through Azure IoT Hub.
-
-    The SCADA device's SAS token is used directly.
-    This avoids requiring an Azure SharedAccessKey connection string.
-    """
+    """Publishes conveyor status to EdgeHub through Azure IoT Hub."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
-
         self.client = IoTHubDeviceClient.create_from_sastoken(
             settings.edgehub_sas_token
         )
-
-        self.client.on_connection_state_change = (
-            self._on_connection_state_change
-        )
-
+        self.client.on_connection_state_change = self._on_connection_state_change
         self.last_protocol_heartbeat_time = 0.0
         self.connected = False
 
@@ -53,207 +42,124 @@ class EdgeHubPublisher:
     # ========================================================
     def _on_connection_state_change(self) -> None:
         self.connected = self.client.connected
-
         if self.connected:
             print("EdgeHub Azure IoT connection established.")
         else:
             print("EdgeHub Azure IoT connection lost.")
 
     def connect_and_upload_tags(self) -> None:
-        """
-        Connect to the SCADA node, mark it online,
-        then create/update all dashboard tags.
-        """
         self.client.connect()
-
         if not self.client.connected:
-            raise ConnectionError(
-                "Could not connect to EdgeHub using the SCADA SAS token."
-            )
+            raise ConnectionError("Could not connect to EdgeHub using the SCADA SAS token.")
 
         self.connected = True
-
-        # Tell EdgeHub that this Python SCADA gateway is online.
-        self._send_edgehub_message(
-            message_type="conn",
-            payload=ConnectMessage().getJson(),
-        )
-
+        self._send_edgehub_message("conn", ConnectMessage().getJson())
         self._send_protocol_heartbeat(force=True)
-
-        # Creates tags on first run; updates them safely later.
         self.upload_tag_configuration()
-
-        print(
-            "EdgeHub ready. "
-            f"Node ID: {self.settings.edgehub_node_id}"
-        )
+        print(f"EdgeHub ready. Node ID: {self.settings.edgehub_node_id}")
 
     def disconnect(self) -> None:
-        """Tell EdgeHub the gateway is stopping, then disconnect."""
         try:
             if self.client.connected:
-                self._send_edgehub_message(
-                    message_type="conn",
-                    payload=DisconnectMessage().getJson(),
-                )
-
+                self._send_edgehub_message("conn", DisconnectMessage().getJson())
                 self.client.disconnect()
-
         except Exception as error:
             print(f"EdgeHub disconnect warning: {error}")
-
         finally:
             self.connected = False
 
-    # ========================================================
-    # EDGEBHUB MESSAGE TRANSPORT
-    # ========================================================
-    def _send_edgehub_message(
-        self,
-        message_type: str,
-        payload: str,
-    ) -> None:
-        """
-        EdgeHub's Azure transport identifies the intended
-        WISE-PaaS / EdgeHub protocol channel through a
-        custom message property:
-
-        conn = connection / heartbeat
-        cfg  = tag and device configuration
-        data = sensor and output values
-        """
+    def _send_edgehub_message(self, message_type: str, payload: str) -> None:
         if not self.client.connected:
-            raise ConnectionError(
-                "EdgeHub is not connected."
-            )
-
+            raise ConnectionError("EdgeHub is not connected.")
         azure_message = Message(payload)
-
-        # This matches the EdgeHub SDK Azure transport style.
         azure_message.custom_properties[message_type] = ""
-
         self.client.send_message(azure_message)
 
-    def _send_protocol_heartbeat(
-        self,
-        force: bool = False,
-    ) -> None:
-        """
-        Keeps the logical SCADA gateway marked online in EdgeHub.
-        """
+    def _send_protocol_heartbeat(self, force: bool = False) -> None:
         now = time.monotonic()
-
         heartbeat_due = (
             now - self.last_protocol_heartbeat_time
             >= self.settings.edgehub_protocol_heartbeat_seconds
         )
-
         if not force and not heartbeat_due:
             return
-
-        self._send_edgehub_message(
-            message_type="conn",
-            payload=HeartbeatMessage().getJson(),
-        )
-
+        self._send_edgehub_message("conn", HeartbeatMessage().getJson())
         self.last_protocol_heartbeat_time = now
 
     # ========================================================
     # TAG CONFIGURATION
     # ========================================================
     def upload_tag_configuration(self) -> None:
-        """
-        Create or update the logical ADAM device and its tags.
-
-        This is safe to call every time the program starts.
-        """
         edge_config = EdgeConfig()
-
-        node_config = NodeConfig(
-            nodeType=constant.EdgeType["Gateway"]
-        )
-
+        node_config = NodeConfig(nodeType=constant.EdgeType["Gateway"])
         device_config = DeviceConfig(
             id=self.settings.edgehub_device_id,
-            name="ADAM-6717 I/O",
+            name="ADAM-6717 Conveyor I/O",
             deviceType="ADAM-6717",
-            description=(
-                "Live DI2 button state and DO0 fan relay state"
-            ),
+            description="Conveyor pill inspection, reject, and safety tags",
         )
 
-        # ----------------------------------------------------
-        # DI2: physical button state
-        # ----------------------------------------------------
-        device_config.discreteTagList.append(
-            DiscreteTagConfig(
-                name="di2_button_live",
-                description="Current DI2 button state",
-                readOnly=True,
-                arraySize=0,
-                state0="Released",
-                state1="Pressed",
-                state2=None,
-                state3=None,
-                state4=None,
-                state5=None,
-                state6=None,
-                state7=None,
+        discrete_tags = [
+            ("di_camera_sensor", "Camera-area product sensor", "Clear", "Detected"),
+            ("di_end_sensor", "End-of-belt verification sensor", "Clear", "Detected"),
+            ("di_button", "Physical reset/start button", "Released", "Pressed"),
+            ("do_conveyor_motor", "Conveyor motor output", "OFF", "ON"),
+            ("alarm_active", "System alarm state", "Normal", "Alarm"),
+        ]
+        for name, description, state0, state1 in discrete_tags:
+            device_config.discreteTagList.append(
+                DiscreteTagConfig(
+                    name=name,
+                    description=description,
+                    readOnly=True,
+                    arraySize=0,
+                    state0=state0,
+                    state1=state1,
+                    state2=None,
+                    state3=None,
+                    state4=None,
+                    state5=None,
+                    state6=None,
+                    state7=None,
+                )
             )
-        )
 
-        # ----------------------------------------------------
-        # DO0: actual relay/fan state
-        # ----------------------------------------------------
-        device_config.discreteTagList.append(
-            DiscreteTagConfig(
-                name="fan_do0_state",
-                description="Current DO0 relay and fan state",
-                readOnly=True,
-                arraySize=0,
-                state0="OFF",
-                state1="ON",
-                state2=None,
-                state3=None,
-                state4=None,
-                state5=None,
-                state6=None,
-                state7=None,
+        analog_tags = [
+    ("product_count", "Products detected since startup", 100000, 0, "products", 0),
+    ("good_count", "Good products detected since startup", 100000, 0, "products", 0),
+    ("faulty_count", "Faulty products detected since startup", 100000, 0, "products", 0),
+    ("temperature_c", "Temperature in Celsius", 100, 0, "C", 1),
+]
+        for name, description, high, low, unit, fraction in analog_tags:
+            device_config.analogTagList.append(
+                AnalogTagConfig(
+                    name=name,
+                    description=description,
+                    readOnly=True,
+                    arraySize=0,
+                    spanHigh=high,
+                    spanLow=low,
+                    engineerUnit=unit,
+                    integerDisplayFormat=0,
+                    fractionDisplayFormat=fraction,
+                )
             )
-        )
 
-        # ----------------------------------------------------
-        # Count of DI2 presses since Python started
-        # ----------------------------------------------------
-        device_config.analogTagList.append(
-            AnalogTagConfig(
-                name="button_press_count",
-                description=(
-                    "Number of DI2 button presses "
-                    "since the Python gateway started"
-                ),
-                readOnly=True,
-                arraySize=0,
-                spanHigh=100000,
-                spanLow=0,
-                engineerUnit="presses",
-                integerDisplayFormat=0,
-                fractionDisplayFormat=0,
+        text_tags = [
+    ("system_state", "State machine status"),
+    ("last_event", "Latest useful conveyor event"),
+    ("last_result", "Latest ML result"),
+    ("queue_summary", "Current queue/status summary"),
+]
+        for name, description in text_tags:
+            device_config.textTagList.append(
+                TextTagConfig(
+                    name=name,
+                    description=description,
+                    readOnly=True,
+                    arraySize=0,
+                )
             )
-        )
-
-        # ----------------------------------------------------
-        # Human-readable latest action
-        # ----------------------------------------------------
-        device_config.textTagList.append(
-            TextTagConfig(
-                name="last_event",
-                description="Latest DI2 and fan action",
-                readOnly=True,
-                arraySize=0,
-            )
-        )
 
         node_config.deviceList.append(device_config)
         edge_config.node = node_config
@@ -262,30 +168,76 @@ class EdgeHubPublisher:
             action=constant.ActionType["Delsert"],
             nodeId=self.settings.edgehub_node_id,
             config=edge_config,
-            heartbeat=int(
-                self.settings.edgehub_protocol_heartbeat_seconds
-            ),
+            heartbeat=int(self.settings.edgehub_protocol_heartbeat_seconds),
         )
-
         if not result:
-            raise RuntimeError(
-                "Could not build the EdgeHub tag configuration payload."
-            )
+            raise RuntimeError("Could not build EdgeHub tag configuration payload.")
 
-        self._send_edgehub_message(
-            message_type="cfg",
-            payload=payload,
-        )
-
-        print(
-            "EdgeHub tag configuration sent: "
-            "di2_button_live, fan_do0_state, "
-            "button_press_count, last_event"
-        )
+        self._send_edgehub_message("cfg", payload)
+        print("EdgeHub conveyor tag configuration sent.")
 
     # ========================================================
     # LIVE DATA PUBLISHING
     # ========================================================
+    def publish_system_status(
+    self,
+    system_state: str,
+    last_event: str,
+    product_count: int,
+    good_count: int,
+    faulty_count: int,
+    last_result: str,
+    queue_summary: str,
+    alarm_active: bool,
+    camera_sensor: bool,
+    end_sensor: bool,
+    button_pressed: bool,
+    conveyor_on: bool,
+    temperature_c: float | None,
+) -> bool:
+        try:
+            self._send_protocol_heartbeat()
+            edge_data = EdgeData()
+
+            values = {
+    "di_camera_sensor": int(camera_sensor),
+    "di_end_sensor": int(end_sensor),
+    "di_button": int(button_pressed),
+    "do_conveyor_motor": int(conveyor_on),
+    "alarm_active": int(alarm_active),
+
+    "product_count": product_count,
+    "good_count": good_count,
+    "faulty_count": faulty_count,
+    "temperature_c": -1 if temperature_c is None else round(temperature_c, 1),
+
+    "system_state": system_state,
+    "last_event": last_event,
+    "last_result": last_result,
+    "queue_summary": queue_summary,
+}
+
+            for tag_name, value in values.items():
+                edge_data.tagList.append(
+                    EdgeTag(self.settings.edgehub_device_id, tag_name, value)
+                )
+
+            edge_data.timestamp = datetime.now()
+            result, payloads = converter.convertData(edge_data)
+
+            if not result:
+                print("Could not convert EdgeHub tag data into a payload.")
+                return False
+
+            for payload in payloads:
+                self._send_edgehub_message("data", payload)
+            return True
+
+        except Exception as error:
+            print(f"EdgeHub publish error: {error}")
+            return False
+
+    # Backward-compatible method for the old ButtonFanService.
     def publish(
         self,
         button_pressed: bool,
@@ -293,65 +245,18 @@ class EdgeHubPublisher:
         button_press_count: int,
         last_event: str,
     ) -> bool:
-        """
-        Upload the latest ADAM states to the EdgeHub tags.
-        """
-        try:
-            self._send_protocol_heartbeat()
-
-            edge_data = EdgeData()
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "di2_button_live",
-                    int(button_pressed),
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "fan_do0_state",
-                    int(fan_on),
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "button_press_count",
-                    button_press_count,
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "last_event",
-                    last_event,
-                )
-            )
-
-            edge_data.timestamp = datetime.now()
-
-            result, payloads = converter.convertData(edge_data)
-
-            if not result:
-                print(
-                    "Could not convert the EdgeHub "
-                    "tag data into a payload."
-                )
-                return False
-
-            for payload in payloads:
-                self._send_edgehub_message(
-                    message_type="data",
-                    payload=payload,
-                )
-
-            return True
-
-        except Exception as error:
-            print(f"EdgeHub publish error: {error}")
-            return False
+        return self.publish_system_status(
+            system_state="LEGACY_BUTTON_FAN",
+            last_event=last_event,
+            product_count=button_press_count,
+            good_count=0,
+            faulty_count=0,
+            last_result="",
+            queue_summary="legacy service",
+            alarm_active=False,
+            camera_sensor=False,
+            end_sensor=False,
+            button_pressed=button_pressed,
+            conveyor_on=fan_on,
+            temperature_c=None,
+        )

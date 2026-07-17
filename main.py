@@ -3,10 +3,6 @@ import time
 from app.adam import Adam6717Connection
 from app.edgehub import EdgeHubPublisher
 from app.settings import load_settings
-from app.services.button_fan_service import ButtonFanService
-from app.services.temperature_buzzer_service import (
-    TemperatureBuzzerService,
-)
 
 
 def main() -> None:
@@ -39,48 +35,21 @@ def main() -> None:
                 edgehub = None
 
         # ----------------------------------------------------
-        # 3. Create services.
-        #    Every service has start() and tick().
+        # 3. Services have been removed.
+        #    Thermistor / AI2 service removed.
         # ----------------------------------------------------
-        button_fan_service = ButtonFanService(
-            settings=settings,
-            adam=adam,
-            edgehub=edgehub,
-        )
-
-        temperature_buzzer_service = TemperatureBuzzerService(
-            settings=settings,
-            adam=adam,
-            edgehub=edgehub,
-        )
-
-        services = [
-            button_fan_service,
-            temperature_buzzer_service,
-        ]
-
-        # ----------------------------------------------------
-        # 4. Start each service once.
-        # ----------------------------------------------------
-        for service in services:
-            service.start()
 
         print()
         print("CMIO gateway is running.")
         print("DI2 button controls DO0 fan.")
-        print("AI2 voltage controls DO1 buzzer.")
+        print("Thermistor AI2 has been removed from this project.")
         print("Press Ctrl+C to stop.")
         print()
 
         # ----------------------------------------------------
-        # 5. One central infinite loop.
+        # 4. Central loop.
         # ----------------------------------------------------
         while True:
-            now = time.monotonic()
-
-            for service in services:
-                service.tick(now)
-
             time.sleep(settings.poll_interval_seconds)
 
     except KeyboardInterrupt:
@@ -89,7 +58,8 @@ def main() -> None:
         print("DO0 fan remains in its current state.")
 
     finally:
-        # Safety: turn buzzer off on exit.
+        # Turn buzzer off on exit just in case.
+        # write_do1() still points to physical DO2 if DO1_ADDRESS=18.
         try:
             adam.write_do1(False)
         except Exception:

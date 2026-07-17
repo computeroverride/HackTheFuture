@@ -7,16 +7,6 @@ from app.settings import Settings
 
 
 class Adam6717Connection:
-    """
-    Handles all Modbus TCP communication with the ADAM-6717.
-
-    Current mappings:
-    DI2 = button
-    DO0 = fan relay
-    AI2 = temperature sensor voltage
-    DO1 = buzzer
-    """
-
     def __init__(self, settings: Settings):
         self.settings = settings
 
@@ -29,148 +19,121 @@ class Adam6717Connection:
     def connect(self) -> None:
         if not self.client.connect():
             raise ConnectionError(
-                "Cannot connect to ADAM-6717 at "
+                f"Could not connect to ADAM-6717 at "
                 f"{self.settings.adam_ip}:{self.settings.adam_port}"
             )
 
         print(
-            "Connected to ADAM-6717 at "
+            f"Connected to ADAM-6717 at "
             f"{self.settings.adam_ip}:{self.settings.adam_port}"
         )
 
     # ========================================================
-    # DIGITAL INPUTS
+    # GENERIC DIGITAL INPUT
     # ========================================================
-    def read_di2(self) -> bool:
-        """
-        Return True while DI2 button is pressed.
 
-        Your ADAM exposes DI through the 0X bit map,
-        so read_coils is used.
-        """
-
+    def read_di(self, address: int) -> bool:
         result = self.client.read_coils(
-            address=self.settings.di2_address,
+            address=address,
             count=1,
             device_id=self.settings.adam_slave_id,
         )
 
         if result.isError():
-            raise RuntimeError(f"Could not read DI2: {result}")
-
-        return bool(result.bits[0])
-
-    # ========================================================
-    # DIGITAL OUTPUTS
-    # ========================================================
-    def read_do0(self) -> bool:
-        """Return current physical state of DO0 fan relay."""
-
-        result = self.client.read_coils(
-            address=self.settings.do0_address,
-            count=1,
-            device_id=self.settings.adam_slave_id,
-        )
-
-        if result.isError():
-            raise RuntimeError(f"Could not read DO0: {result}")
-
-        return bool(result.bits[0])
-
-    def write_do0(self, fan_on: bool) -> None:
-        """True = fan relay ON. False = fan relay OFF."""
-
-        result = self.client.write_coil(
-            address=self.settings.do0_address,
-            value=fan_on,
-            device_id=self.settings.adam_slave_id,
-        )
-
-        if result.isError():
-            raise RuntimeError(f"Could not write DO0: {result}")
-
-    def read_do1(self) -> bool:
-        """Return current physical state of DO1 buzzer."""
-
-        result = self.client.read_coils(
-            address=self.settings.do1_address,
-            count=1,
-            device_id=self.settings.adam_slave_id,
-        )
-
-        if result.isError():
-            raise RuntimeError(f"Could not read DO1: {result}")
-
-        return bool(result.bits[0])
-
-    def write_do1(self, buzzer_on: bool) -> None:
-        """True = buzzer ON. False = buzzer OFF."""
-
-        result = self.client.write_coil(
-            address=self.settings.do1_address,
-            value=buzzer_on,
-            device_id=self.settings.adam_slave_id,
-        )
-
-        if result.isError():
-            raise RuntimeError(f"Could not write DO1: {result}")
-
-    # ========================================================
-    # ANALOG INPUTS
-    # ========================================================
-    def _decode_cdab_float(
-        self,
-        registers: list[int],
-    ) -> float:
-        """
-        Decode ADAM analog input float.
-
-        Your diagnostic confirmed:
-        AI2 offset 34
-        register order CDAB
-
-        Example:
-        [14680, 16420] -> 2.566 V
-        """
-
-        if len(registers) < 2:
             raise RuntimeError(
-                f"Expected 2 registers, got {len(registers)}."
+                f"Could not read DI address {address}: {result}"
             )
 
-        packed = struct.pack(
-            ">HH",
-            registers[1],
-            registers[0],
+        return bool(result.bits[0])
+
+    # ========================================================
+    # GENERIC DIGITAL OUTPUT
+    # ========================================================
+
+    def read_do(self, address: int) -> bool:
+        result = self.client.read_coils(
+            address=address,
+            count=1,
+            device_id=self.settings.adam_slave_id,
         )
 
-        value = struct.unpack(">f", packed)[0]
-
-        if not math.isfinite(value):
+        if result.isError():
             raise RuntimeError(
-                f"Decoded analog value is invalid: {value}"
+                f"Could not read DO address {address}: {result}"
             )
 
-        return value
+        return bool(result.bits[0])
 
-    def read_ai2_voltage(self) -> float:
-        """Read live voltage from AI2."""
+    def write_do(self, address: int, value: bool) -> None:
+        result = self.client.write_coil(
+            address=address,
+            value=value,
+            device_id=self.settings.adam_slave_id,
+        )
 
+        if result.isError():
+            raise RuntimeError(
+                f"Could not write DO address {address}: {result}"
+            )
+
+    # ========================================================
+    # GENERIC ANALOG INPUT
+    # ========================================================
+
+    def read_ai_voltage(self, address: int) -> float:
         result = self.client.read_holding_registers(
-            address=self.settings.ai2_address,
+            address=address,
             count=2,
             device_id=self.settings.adam_slave_id,
         )
 
         if result.isError():
-            raise RuntimeError(f"Could not read AI2: {result}")
+            raise RuntimeError(
+                f"Could not read AI address {address}: {result}"
+            )
 
-        registers = result.registers[:2]
+        return self._decode_cdab_float(result.registers)
 
-        return self._decode_cdab_float(registers)
+    def _decode_cdab_float(self, registers) -> float:
+        raw_bytes = struct.pack(
+            ">HH",
+            registers[1],
+            registers[0],
+        )
+
+        value = struct.unpack(">f", raw_bytes)[0]
+
+        if not math.isfinite(value):
+            return 0.0
+
+        return value
+
+    # ========================================================
+    # OLD WRAPPERS
+    # Keep these so older code still works.
+    # ========================================================
+
+    def read_di2(self) -> bool:
+        return self.read_di(self.settings.di2_address)
+
+    def read_do0(self) -> bool:
+        return self.read_do(self.settings.do0_address)
+
+    def write_do0(self, fan_on: bool) -> None:
+        self.write_do(self.settings.do0_address, fan_on)
+
+    def read_do1(self) -> bool:
+        return self.read_do(self.settings.do1_address)
+
+    def write_do1(self, buzzer_on: bool) -> None:
+        self.write_do(self.settings.do1_address, buzzer_on)
+
+    def read_ai2_voltage(self) -> float:
+        return self.read_ai_voltage(self.settings.ai2_address)
 
     # ========================================================
     # CLOSE
     # ========================================================
+
     def close(self) -> None:
         self.client.close()

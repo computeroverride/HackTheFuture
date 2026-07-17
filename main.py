@@ -3,7 +3,10 @@ import time
 from app.adam import Adam6717Connection
 from app.edgehub import EdgeHubPublisher
 from app.settings import load_settings
-from app.services.test import ButtonFanService
+from app.services.button_fan_service import ButtonFanService
+from app.services.temperature_buzzer_service import (
+    TemperatureBuzzerService,
+)
 
 
 def main() -> None:
@@ -20,7 +23,7 @@ def main() -> None:
 
         # ----------------------------------------------------
         # 2. Connect to EdgeHub.
-        #    ADAM control can still work if EdgeHub is offline.
+        #    ADAM control still works if EdgeHub is offline.
         # ----------------------------------------------------
         if settings.edgehub_enabled:
             try:
@@ -30,14 +33,14 @@ def main() -> None:
             except Exception as error:
                 print(
                     "EdgeHub is unavailable. "
-                    "ADAM button/fan control will still run."
+                    "ADAM control will still run."
                 )
                 print(f"EdgeHub connection error: {error}")
                 edgehub = None
 
         # ----------------------------------------------------
         # 3. Create services.
-        #    Every future sensor/service goes into this list.
+        #    Every service has start() and tick().
         # ----------------------------------------------------
         button_fan_service = ButtonFanService(
             settings=settings,
@@ -45,21 +48,16 @@ def main() -> None:
             edgehub=edgehub,
         )
 
+        temperature_buzzer_service = TemperatureBuzzerService(
+            settings=settings,
+            adam=adam,
+            edgehub=edgehub,
+        )
+
         services = [
             button_fan_service,
+            temperature_buzzer_service,
         ]
-
-        # Future examples:
-        #
-        # photocell_service = PhotocellService(
-        #     settings=settings,
-        #     adam=adam,
-        #     edgehub=edgehub,
-        # )
-        # services.append(photocell_service)
-        #
-        # inspection_service = InspectionService(...)
-        # services.append(inspection_service)
 
         # ----------------------------------------------------
         # 4. Start each service once.
@@ -67,11 +65,15 @@ def main() -> None:
         for service in services:
             service.start()
 
-        print("\nCMIO gateway is running.")
-        print("Press Ctrl+C to stop.\n")
+        print()
+        print("CMIO gateway is running.")
+        print("DI2 button controls DO0 fan.")
+        print("AI2 voltage controls DO1 buzzer.")
+        print("Press Ctrl+C to stop.")
+        print()
 
         # ----------------------------------------------------
-        # 5. The ONE central infinite loop in the project.
+        # 5. One central infinite loop.
         # ----------------------------------------------------
         while True:
             now = time.monotonic()
@@ -82,9 +84,17 @@ def main() -> None:
             time.sleep(settings.poll_interval_seconds)
 
     except KeyboardInterrupt:
-        print("\nStopped. DO0 remains in its current state.")
+        print()
+        print("Stopped by user.")
+        print("DO0 fan remains in its current state.")
 
     finally:
+        # Safety: turn buzzer off on exit.
+        try:
+            adam.write_do1(False)
+        except Exception:
+            pass
+
         adam.close()
 
         if edgehub is not None:

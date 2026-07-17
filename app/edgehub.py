@@ -28,10 +28,10 @@ from app.settings import Settings
 
 class EdgeHubPublisher:
     """
-    Publishes EdgeHub SCADA protocol messages through Azure IoT Hub.
+    Publishes ADAM-6717 values to EdgeHub.
 
-    The SCADA device's SAS token is used directly.
-    This avoids requiring an Azure SharedAccessKey connection string.
+    This uses the SCADA device SAS token copied from EdgeHub.
+    The Python laptop acts as the data gateway.
     """
 
     def __init__(self, settings: Settings):
@@ -51,7 +51,11 @@ class EdgeHubPublisher:
     # ========================================================
     # CONNECTION
     # ========================================================
-    def _on_connection_state_change(self) -> None:
+    def _on_connection_state_change(
+        self,
+        *args,
+        **kwargs,
+    ) -> None:
         self.connected = self.client.connected
 
         if self.connected:
@@ -61,9 +65,10 @@ class EdgeHubPublisher:
 
     def connect_and_upload_tags(self) -> None:
         """
-        Connect to the SCADA node, mark it online,
+        Connect to EdgeHub, mark the Python gateway online,
         then create/update all dashboard tags.
         """
+
         self.client.connect()
 
         if not self.client.connected:
@@ -73,7 +78,6 @@ class EdgeHubPublisher:
 
         self.connected = True
 
-        # Tell EdgeHub that this Python SCADA gateway is online.
         self._send_edgehub_message(
             message_type="conn",
             payload=ConnectMessage().getJson(),
@@ -81,7 +85,6 @@ class EdgeHubPublisher:
 
         self._send_protocol_heartbeat(force=True)
 
-        # Creates tags on first run; updates them safely later.
         self.upload_tag_configuration()
 
         print(
@@ -91,6 +94,7 @@ class EdgeHubPublisher:
 
     def disconnect(self) -> None:
         """Tell EdgeHub the gateway is stopping, then disconnect."""
+
         try:
             if self.client.connected:
                 self._send_edgehub_message(
@@ -107,7 +111,7 @@ class EdgeHubPublisher:
             self.connected = False
 
     # ========================================================
-    # EDGEBHUB MESSAGE TRANSPORT
+    # MESSAGE TRANSPORT
     # ========================================================
     def _send_edgehub_message(
         self,
@@ -115,22 +119,17 @@ class EdgeHubPublisher:
         payload: str,
     ) -> None:
         """
-        EdgeHub's Azure transport identifies the intended
-        WISE-PaaS / EdgeHub protocol channel through a
-        custom message property:
+        EdgeHub protocol message types:
 
-        conn = connection / heartbeat
-        cfg  = tag and device configuration
-        data = sensor and output values
+        conn = connect / disconnect / heartbeat
+        cfg  = tag configuration
+        data = live tag data
         """
+
         if not self.client.connected:
-            raise ConnectionError(
-                "EdgeHub is not connected."
-            )
+            raise ConnectionError("EdgeHub is not connected.")
 
         azure_message = Message(payload)
-
-        # This matches the EdgeHub SDK Azure transport style.
         azure_message.custom_properties[message_type] = ""
 
         self.client.send_message(azure_message)
@@ -139,9 +138,8 @@ class EdgeHubPublisher:
         self,
         force: bool = False,
     ) -> None:
-        """
-        Keeps the logical SCADA gateway marked online in EdgeHub.
-        """
+        """Keep the logical SCADA gateway online in EdgeHub."""
+
         now = time.monotonic()
 
         heartbeat_due = (
@@ -164,10 +162,10 @@ class EdgeHubPublisher:
     # ========================================================
     def upload_tag_configuration(self) -> None:
         """
-        Create or update the logical ADAM device and its tags.
-
-        This is safe to call every time the program starts.
+        Create/update the ADAM-6717 logical device and tags.
+        Safe to call every time the gateway starts.
         """
+
         edge_config = EdgeConfig()
 
         node_config = NodeConfig(
@@ -179,12 +177,12 @@ class EdgeHubPublisher:
             name="ADAM-6717 I/O",
             deviceType="ADAM-6717",
             description=(
-                "Live DI2 button state and DO0 fan relay state"
+                "Python gateway for ADAM-6717 DI, DO and AI data"
             ),
         )
 
         # ----------------------------------------------------
-        # DI2: physical button state
+        # DI2 button
         # ----------------------------------------------------
         device_config.discreteTagList.append(
             DiscreteTagConfig(
@@ -204,12 +202,12 @@ class EdgeHubPublisher:
         )
 
         # ----------------------------------------------------
-        # DO0: actual relay/fan state
+        # DO0 fan relay
         # ----------------------------------------------------
         device_config.discreteTagList.append(
             DiscreteTagConfig(
                 name="fan_do0_state",
-                description="Current DO0 relay and fan state",
+                description="Current DO0 fan relay state",
                 readOnly=True,
                 arraySize=0,
                 state0="OFF",
@@ -224,15 +222,12 @@ class EdgeHubPublisher:
         )
 
         # ----------------------------------------------------
-        # Count of DI2 presses since Python started
+        # Button press count
         # ----------------------------------------------------
         device_config.analogTagList.append(
             AnalogTagConfig(
                 name="button_press_count",
-                description=(
-                    "Number of DI2 button presses "
-                    "since the Python gateway started"
-                ),
+                description="Number of DI2 button presses since startup",
                 readOnly=True,
                 arraySize=0,
                 spanHigh=100000,
@@ -244,12 +239,93 @@ class EdgeHubPublisher:
         )
 
         # ----------------------------------------------------
-        # Human-readable latest action
+        # Button/fan event text
         # ----------------------------------------------------
         device_config.textTagList.append(
             TextTagConfig(
-                name="last_event",
-                description="Latest DI2 and fan action",
+                name="last_button_event",
+                description="Latest DI2 button and DO0 fan action",
+                readOnly=True,
+                arraySize=0,
+            )
+        )
+
+        # ----------------------------------------------------
+        # AI2 temperature sensor voltage
+        # ----------------------------------------------------
+        device_config.analogTagList.append(
+            AnalogTagConfig(
+                name="ai2_temperature_voltage",
+                description="AI2 voltage from temperature sensor",
+                readOnly=True,
+                arraySize=0,
+                spanHigh=10,
+                spanLow=-10,
+                engineerUnit="V",
+                integerDisplayFormat=0,
+                fractionDisplayFormat=3,
+            )
+        )
+
+        # ----------------------------------------------------
+        # DO1 buzzer
+        # ----------------------------------------------------
+        device_config.discreteTagList.append(
+            DiscreteTagConfig(
+                name="buzzer_do1_state",
+                description="Current DO1 buzzer state",
+                readOnly=True,
+                arraySize=0,
+                state0="OFF",
+                state1="ON",
+                state2=None,
+                state3=None,
+                state4=None,
+                state5=None,
+                state6=None,
+                state7=None,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Temperature alarm
+        # ----------------------------------------------------
+        device_config.discreteTagList.append(
+            DiscreteTagConfig(
+                name="temperature_alarm",
+                description="Temperature voltage threshold alarm",
+                readOnly=True,
+                arraySize=0,
+                state0="Normal",
+                state1="Alarm",
+                state2=None,
+                state3=None,
+                state4=None,
+                state5=None,
+                state6=None,
+                state7=None,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Temperature event text
+        # ----------------------------------------------------
+        device_config.textTagList.append(
+            TextTagConfig(
+                name="last_temperature_event",
+                description="Latest AI2 and DO1 buzzer action",
+                readOnly=True,
+                arraySize=0,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Overall system status
+        # ----------------------------------------------------
+        device_config.textTagList.append(
+            TextTagConfig(
+                name="system_status",
+                description="Overall gateway status",
                 readOnly=True,
                 arraySize=0,
             )
@@ -269,7 +345,7 @@ class EdgeHubPublisher:
 
         if not result:
             raise RuntimeError(
-                "Could not build the EdgeHub tag configuration payload."
+                "Could not build EdgeHub tag configuration payload."
             )
 
         self._send_edgehub_message(
@@ -279,26 +355,54 @@ class EdgeHubPublisher:
 
         print(
             "EdgeHub tag configuration sent: "
-            "di2_button_live, fan_do0_state, "
-            "button_press_count, last_event"
+            "di2_button_live, fan_do0_state, button_press_count, "
+            "last_button_event, ai2_temperature_voltage, "
+            "buzzer_do1_state, temperature_alarm, "
+            "last_temperature_event, system_status"
         )
 
     # ========================================================
-    # LIVE DATA PUBLISHING
+    # DATA HELPERS
     # ========================================================
-    def publish(
+    def _send_edge_data(
+        self,
+        edge_data: EdgeData,
+    ) -> bool:
+        """Convert EdgeData and send it to EdgeHub."""
+
+        self._send_protocol_heartbeat()
+
+        edge_data.timestamp = datetime.now()
+
+        result, payloads = converter.convertData(edge_data)
+
+        if not result:
+            print(
+                "Could not convert EdgeHub tag data into payload."
+            )
+            return False
+
+        for payload in payloads:
+            self._send_edgehub_message(
+                message_type="data",
+                payload=payload,
+            )
+
+        return True
+
+    # ========================================================
+    # LIVE DATA PUBLISHING — BUTTON + FAN
+    # ========================================================
+    def publish_button_fan(
         self,
         button_pressed: bool,
         fan_on: bool,
         button_press_count: int,
         last_event: str,
     ) -> bool:
-        """
-        Upload the latest ADAM states to the EdgeHub tags.
-        """
-        try:
-            self._send_protocol_heartbeat()
+        """Upload DI2 button and DO0 fan states."""
 
+        try:
             edge_data = EdgeData()
 
             edge_data.tagList.append(
@@ -328,30 +432,90 @@ class EdgeHubPublisher:
             edge_data.tagList.append(
                 EdgeTag(
                     self.settings.edgehub_device_id,
-                    "last_event",
+                    "last_button_event",
                     last_event,
                 )
             )
 
-            edge_data.timestamp = datetime.now()
-
-            result, payloads = converter.convertData(edge_data)
-
-            if not result:
-                print(
-                    "Could not convert the EdgeHub "
-                    "tag data into a payload."
-                )
-                return False
-
-            for payload in payloads:
-                self._send_edgehub_message(
-                    message_type="data",
-                    payload=payload,
-                )
-
-            return True
+            return self._send_edge_data(edge_data)
 
         except Exception as error:
-            print(f"EdgeHub publish error: {error}")
+            print(f"EdgeHub button/fan publish error: {error}")
+            return False
+
+    # Backward compatibility with your older service code.
+    def publish(
+        self,
+        button_pressed: bool,
+        fan_on: bool,
+        button_press_count: int,
+        last_event: str,
+    ) -> bool:
+        return self.publish_button_fan(
+            button_pressed=button_pressed,
+            fan_on=fan_on,
+            button_press_count=button_press_count,
+            last_event=last_event,
+        )
+
+    # ========================================================
+    # LIVE DATA PUBLISHING — TEMPERATURE + BUZZER
+    # ========================================================
+    def publish_temperature_buzzer(
+        self,
+        ai2_voltage: float,
+        buzzer_on: bool,
+        temperature_alarm: bool,
+        last_event: str,
+        system_status: str,
+    ) -> bool:
+        """Upload AI2 voltage and DO1 buzzer states."""
+
+        try:
+            edge_data = EdgeData()
+
+            edge_data.tagList.append(
+                EdgeTag(
+                    self.settings.edgehub_device_id,
+                    "ai2_temperature_voltage",
+                    round(ai2_voltage, 3),
+                )
+            )
+
+            edge_data.tagList.append(
+                EdgeTag(
+                    self.settings.edgehub_device_id,
+                    "buzzer_do1_state",
+                    int(buzzer_on),
+                )
+            )
+
+            edge_data.tagList.append(
+                EdgeTag(
+                    self.settings.edgehub_device_id,
+                    "temperature_alarm",
+                    int(temperature_alarm),
+                )
+            )
+
+            edge_data.tagList.append(
+                EdgeTag(
+                    self.settings.edgehub_device_id,
+                    "last_temperature_event",
+                    last_event,
+                )
+            )
+
+            edge_data.tagList.append(
+                EdgeTag(
+                    self.settings.edgehub_device_id,
+                    "system_status",
+                    system_status,
+                )
+            )
+
+            return self._send_edge_data(edge_data)
+
+        except Exception as error:
+            print(f"EdgeHub temperature/buzzer publish error: {error}")
             return False

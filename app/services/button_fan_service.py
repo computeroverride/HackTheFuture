@@ -8,11 +8,11 @@ from app.settings import Settings
 
 class ButtonFanService:
     """
-    Handles only:
+    Handles:
+
     DI2 button press -> toggle DO0 fan relay -> publish states.
 
-    Important:
-    This class does NOT contain an infinite while loop.
+    This class does not contain an infinite loop.
     main.py calls tick() repeatedly.
     """
 
@@ -31,7 +31,7 @@ class ButtonFanService:
         self.fan_on = False
         self.previous_button_state = False
         self.button_press_count = 0
-        self.last_event = "Gateway not started"
+        self.last_event = "Button/fan service not started"
 
         self.last_toggle_time = 0.0
         self.last_publish_time = 0.0
@@ -41,14 +41,15 @@ class ButtonFanService:
         """
         Read the real ADAM state once before the central loop begins.
 
-        This prevents an accidental toggle if DI2 is already being held
+        This prevents an accidental toggle if DI2 is already held
         when Python starts.
         """
+
         self.fan_on = self.adam.read_do0()
         self.previous_button_state = self.adam.read_di2()
 
         self.button_press_count = 0
-        self.last_event = "Gateway started"
+        self.last_event = "Button/fan service started"
 
         print(f"Fan starts as: {'ON' if self.fan_on else 'OFF'}")
         print("Press DI2 once to toggle the fan.")
@@ -63,25 +64,23 @@ class ButtonFanService:
 
     def tick(self, now: float) -> None:
         """
-        Run one short control cycle only.
+        Run one short control cycle.
 
-        main.py calls this repeatedly. Do not add while True here.
+        main.py calls this repeatedly.
         """
+
         if not self.started:
             raise RuntimeError(
                 "ButtonFanService.start() must run before tick()."
             )
 
-        # Read DI2 once.
         button_pressed = self.adam.read_di2()
 
-        # Detect only a fresh press: Released -> Pressed.
         new_press = (
             button_pressed
             and not self.previous_button_state
         )
 
-        # Debounce prevents one press from toggling multiple times.
         if (
             new_press
             and now - self.last_toggle_time
@@ -89,7 +88,6 @@ class ButtonFanService:
         ):
             self.fan_on = not self.fan_on
 
-            # Write the new fan state to physical DO0.
             self.adam.write_do0(self.fan_on)
 
             self.button_press_count += 1
@@ -102,7 +100,7 @@ class ButtonFanService:
 
             self.last_toggle_time = now
 
-        # Read DO0 again so EdgeHub always receives the actual relay state.
+        # Read DO0 again so EdgeHub receives actual relay state.
         self.fan_on = self.adam.read_do0()
 
         self._publish_if_needed(
@@ -110,7 +108,6 @@ class ButtonFanService:
             button_pressed=button_pressed,
         )
 
-        # Save this for the next cycle's Released -> Pressed detection.
         self.previous_button_state = button_pressed
 
     def _publish_if_needed(
@@ -119,9 +116,8 @@ class ButtonFanService:
         button_pressed: bool,
         force: bool = False,
     ) -> None:
-        """
-        Send only when a state changed, or when the heartbeat is due.
-        """
+        """Send when state changed or heartbeat is due."""
+
         if self.edgehub is None:
             return
 
@@ -145,7 +141,7 @@ class ButtonFanService:
             return
 
         try:
-            success = self.edgehub.publish(
+            success = self.edgehub.publish_button_fan(
                 button_pressed=button_pressed,
                 fan_on=self.fan_on,
                 button_press_count=self.button_press_count,
@@ -163,8 +159,7 @@ class ButtonFanService:
                     f"Count={self.button_press_count}"
                 )
             else:
-                print("EdgeHub send failed.")
+                print("EdgeHub button/fan send failed.")
 
         except Exception as error:
-            # Physical ADAM control continues even if EdgeHub/Internet drops.
-            print(f"EdgeHub publish error: {error}")
+            print(f"EdgeHub button/fan publish error: {error}")

@@ -20,6 +20,10 @@ def require_env(name: str) -> str:
     return value
 
 
+def optional_env(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
+
+
 def parse_bool(value: str) -> bool:
     return value.strip().lower() in {
         "1",
@@ -40,10 +44,21 @@ class Settings:
 
     di2_address: int
     do0_address: int
+    ai2_address: int
+    do1_address: int
 
+    # ========================================================
+    # LOOP SETTINGS
+    # ========================================================
     poll_interval_seconds: float
     debounce_seconds: float
     publish_heartbeat_seconds: float
+
+    # ========================================================
+    # TEMPERATURE / BUZZER SETTINGS
+    # ========================================================
+    buzzer_on_voltage: float
+    buzzer_off_voltage: float
 
     # ========================================================
     # EDGEHUB
@@ -57,10 +72,9 @@ class Settings:
 
 def load_settings() -> Settings:
     edgehub_enabled = parse_bool(
-        os.getenv("EDGEHUB_ENABLED", "true")
+        optional_env("EDGEHUB_ENABLED", "true")
     )
 
-    # These stay blank only when EdgeHub is deliberately disabled.
     edgehub_node_id = ""
     edgehub_sas_token = ""
 
@@ -73,8 +87,8 @@ def load_settings() -> Settings:
         ):
             raise RuntimeError(
                 "EDGEHUB_SAS_TOKEN must begin with "
-                "'SharedAccessSignature'. Copy the complete "
-                "SAS token from the SCADA device Connection Setting."
+                "'SharedAccessSignature'. Copy the complete SAS token "
+                "from the EdgeHub SCADA device connection settings."
             )
 
     return Settings(
@@ -87,7 +101,12 @@ def load_settings() -> Settings:
 
         di2_address=int(require_env("DI2_ADDRESS")),
         do0_address=int(require_env("DO0_ADDRESS")),
+        ai2_address=int(require_env("AI2_ADDRESS")),
+        do1_address=int(require_env("DO1_ADDRESS")),
 
+        # ----------------------------------------------------
+        # Loop
+        # ----------------------------------------------------
         poll_interval_seconds=float(
             require_env("POLL_INTERVAL_SECONDS")
         ),
@@ -99,14 +118,27 @@ def load_settings() -> Settings:
         ),
 
         # ----------------------------------------------------
+        # Temperature / buzzer
+        # ----------------------------------------------------
+        buzzer_on_voltage=float(
+            require_env("BUZZER_ON_VOLTAGE")
+        ),
+        buzzer_off_voltage=float(
+            require_env("BUZZER_OFF_VOLTAGE")
+        ),
+
+        # ----------------------------------------------------
         # EdgeHub
         # ----------------------------------------------------
         edgehub_enabled=edgehub_enabled,
         edgehub_node_id=edgehub_node_id,
         edgehub_sas_token=edgehub_sas_token,
-        edgehub_device_id=require_env("EDGEHUB_DEVICE_ID"),
+        edgehub_device_id=optional_env(
+            "EDGEHUB_DEVICE_ID",
+            "ADAM6717_IO",
+        ),
         edgehub_protocol_heartbeat_seconds=float(
-            os.getenv(
+            optional_env(
                 "EDGEHUB_PROTOCOL_HEARTBEAT_SECONDS",
                 "60",
             )

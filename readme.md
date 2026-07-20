@@ -36,8 +36,7 @@ This repository is a Python gateway for the ADAM-6717 I/O device. It reads senso
 py -m pip install -r requirements.txt
 ```
 
-3. Configure required environment variables given in .env-example:
-
+3. Configure required environment variables in `.env`.
 
 
 ## Run
@@ -46,6 +45,57 @@ py -m pip install -r requirements.txt
 py main.py
 ```
 
+## ML / AI
+
+The app uses the `app.ml.training` training script and the `app.ml.pill_inference.PillPredictor` model.
+
+### Image storage
+
+- Pass images are stored under `storage/predictions/pass/`.
+- Failed or uncertain images are stored under `storage/failures/`.
+- Each saved image file is named using the product ID, predicted label, and timestamp.
+
+### Inspection flow
+
+- The conveyor controller captures a sharpest webcam frame via `app.services.pill_inspector.PillInspector`.
+- `PillPredictor.predict_frame()` converts the image to RGB, applies transforms, and runs the model.
+- The predicted label, confidence, and final pass/fail decision are returned, then saved to disk.
+- If Telegram is enabled, the saved image is sent with feedback buttons.
+
+### Feedback loop
+
+- Telegram feedback is polled continuously by `app.conveyor.inspection.poll_telegram_feedback()`.
+- Feedback events are stored in the notifier and parsed into:
+  - `feedback_product_id`
+  - `actual_class`
+  - `feedback_status`
+  - `ml_prediction_correct`
+- The controller updates totals and status on human feedback.
+
+### Training command
+
+Use the training script to retrain or improve the classifier from image folders:
+
+```powershell
+py app\ml\training.py --data storage\datasets --output storage\models\pill_classifier.pt --epochs 20 --batch-size 16
+```
+
+## EdgeHub
+
+The app sends a consolidated monitoring snapshot to EdgeHub every 60 seconds.
+
+### What is sent
+
+- Device and workflow state
+- Current product and process stage
+- Last event and last completed product
+- ML classification status, prediction, and confidence
+- Feedback status and actual class
+- Camera/ADAM connectivity flags
+- Reject and buzzer states
+- 60-second counters for button, photocell, completion, reject impact, fan, buzzer, and feedback events
+- lifetime totals for inspections, passes, fail_defect, fail_different, reject confirmations, reject timeouts, feedback count, and ML corrections
+- cycle-time metrics: last and average cycle duration
 
 ## Project Structure
 

@@ -3,7 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 .vscode/
-storage/datasets/fail_defect/*
-storage/datasets/fail_different/*
-storage/datasets/pass/*
+storage/datasets/fail_defect/
+storage/datasets/fail_different/
+storage/datasets/pass/
+storage/failures/
 storage/test/*

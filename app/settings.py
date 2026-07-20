@@ -130,14 +130,24 @@ def load_settings() -> Settings:
         "",
     )
 
-    if edgehub_enabled:
+    if edgehub_enabled and not edgehub_sas_token:
+        print(
+            "EDGEHUB_ENABLED is true but no valid "
+            "EDGEHUB_SAS_TOKEN was provided. "
+            "EdgeHub publishing will be skipped."
+        )
+        edgehub_enabled = False
+
+    if edgehub_enabled and edgehub_sas_token:
         if not edgehub_sas_token.startswith(
             "SharedAccessSignature"
         ):
-            raise ValueError(
-                "EDGEHUB_SAS_TOKEN must start with "
-                "'SharedAccessSignature'."
+            print(
+                "EDGEHUB_ENABLED is true but the provided "
+                "EDGEHUB_SAS_TOKEN is invalid. "
+                "EdgeHub publishing will be skipped."
             )
+            edgehub_enabled = False
 
     # --------------------------------------------------------
     # Buzzer compatibility:
@@ -159,7 +169,10 @@ def load_settings() -> Settings:
         str(do2_address),
     )
 
-    telegram_enabled = parse_bool(os.getenv("TELEGRAM_ENABLED", "false"))
+    telegram_enabled = _get_bool(
+        "TELEGRAM_ENABLED",
+        "false",
+    )
 
     return Settings(
         # ADAM
@@ -183,6 +196,14 @@ def load_settings() -> Settings:
         ai6_address=_get_int("AI6_ADDRESS", "42"),
 
         # Loop
+        ai_temperature_address=_get_int(
+            "AI_TEMPERATURE_ADDRESS",
+            "0",
+        ),
+        temperature_enabled=_get_bool(
+            "TEMPERATURE_ENABLED",
+            "false",
+        ),
         poll_interval_seconds=_get_float(
             "POLL_INTERVAL_SECONDS",
             "0.05",

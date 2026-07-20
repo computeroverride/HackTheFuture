@@ -62,6 +62,10 @@ class ConveyorController:
         self.adam = Adam6717Connection(settings)
         self.edgehub: EdgeHubPublisher | None = None
         self.adam_connected = False
+        self._last_adam_connection_state: bool | None = None
+        self._last_status_text = ""
+        self._last_status_time = 0.0
+        self._last_adam_reconnect_attempt = 0.0
 
         self.entry_button = EntryButton(self.adam, settings)
         self.crash_sensor = CrashSensorDI0(self.adam, settings)
@@ -126,6 +130,8 @@ class ConveyorController:
                 )
                 print(f"EdgeHub connection error: {error}")
                 self.edgehub = None
+
+        self._last_adam_connection_state = self.adam_connected
 
     # =====================================================
     # Photocell
@@ -255,75 +261,76 @@ class ConveyorController:
         product_id: str,
         result: dict[str, Any],
     ) -> None:
+        """Send every captured inspection image with class-feedback buttons.
+
+        The feedback buttons represent the ACTUAL class, so they should still
+        be shown when the ML prediction is uncertain or uses an unexpected
+        label.
+        """
         if self.notifier is None:
+            print("Telegram notifier is disabled.")
             return
 
         label = self._normalise_label(
             result.get("final_label", "unknown")
         )
-        confidence = float(
-            result.get("confidence", 0.0)
+        confidence = float(result.get("confidence", 0.0))
+        saved_image = result.get(
+            "saved_image",
+            result.get("image_path"),
         )
-        saved_image = result.get("saved_image")
-        product_number = self._extract_product_number(
-            product_id
+        product_number = self._extract_product_number(product_id)
+
+        print(
+            "Telegram inspection payload -> "
+            f"product_id={product_id!r}, "
+            f"product_number={product_number!r}, "
+            f"label={label!r}, "
+            f"saved_image={saved_image!r}"
         )
 
-        image_path: Path | None = None
+        if not saved_image:
+            print(
+                "Feedback buttons not sent: PillInspector returned no "
+                "saved_image/image_path."
+            )
+            self.notifier.send(
+                f"Inspection completed for {product_id}\n"
+                f"ML prediction: {label}\n"
+                f"Confidence: {confidence}\n"
+                "No inspection image was returned."
+            )
+            return
 
-        if saved_image:
-            image_path = Path(saved_image)
+        image_path = Path(saved_image)
+        if not image_path.exists():
+            print(
+                "Feedback buttons not sent: inspection image does not "
+                f"exist at {image_path}."
+            )
+            return
 
-            if not image_path.exists():
-                print(
-                    "Inspection image was returned but does "
-                    f"not exist: {image_path}"
-                )
-                image_path = None
+        if product_number is None:
+            print(
+                "Feedback buttons not sent: product ID contains no number: "
+                f"{product_id!r}."
+            )
+            return
 
-        # Preferred route: sends the photo for GOOD and BAD,
-        # including product ID, class, confidence and feedback buttons.
-        if (
-            image_path is not None
-            and product_number is not None
-            and label in TELEGRAM_FEEDBACK_LABELS
-        ):
+        try:
+       
             self.notifier.send_inspection_result(
                 product_id=product_number,
                 predicted_label=label,
                 confidence=confidence,
                 image_path=image_path,
             )
-            return
-
-        # Fallback for inspection_error, fail_uncertain, unknown
-        # labels, missing images, or non-numeric product IDs.
-        icon = "✅" if result.get("is_pass") else "⚠️"
-        status = "GOOD" if result.get("is_pass") else "BAD"
-
-        caption = (
-            f"{icon} Product inspection result\n"
-            f"Product ID: {product_id}\n"
-            f"Classification status: {status}\n"
-            f"ML prediction: {label}\n"
-            f"Confidence: {confidence:.1%}"
-            if 0.0 <= confidence <= 1.0
-            else (
-                f"{icon} Product inspection result\n"
-                f"Product ID: {product_id}\n"
-                f"Classification status: {status}\n"
-                f"ML prediction: {label}\n"
-                f"Confidence: {confidence:.1f}%"
+            print("Telegram inspection photo sent with feedback buttons.")
+        except Exception as error:
+            print(
+                "Telegram inspection result failed before buttons could "
+                f"be attached: {error}"
             )
-        )
-
-        if image_path is not None:
-            self.notifier.send_photo(
-                image_path=image_path,
-                caption=caption,
-            )
-        else:
-            self.notifier.send(caption)
 
     # =====================================================
     # State machine
@@ -405,14 +412,21 @@ class ConveyorController:
                     self.notifier.get_feedback_messages()
                     last_feedback_poll = now
 
+                if not self.adam_connected:
+                    self._attempt_adam_reconnect(now)
+
                 if self.adam_connected:
                     # -----------------------------------------
                     # Button pressed -> generate product ID
                     # -----------------------------------------
-                    new_product_id = (
-                        self.entry_button
-                        .get_product_id_if_pressed()
-                    )
+                    try:
+                        new_product_id = (
+                            self.entry_button
+                            .get_product_id_if_pressed()
+                        )
+                    except Exception as error:
+                        self._handle_adam_failure(error)
+                        new_product_id = None
 
                     if new_product_id is not None:
                         if state != "idle":
@@ -453,12 +467,18 @@ class ConveyorController:
                     # -----------------------------------------
                     # Read photocell using proven full AI scan
                     # -----------------------------------------
-                    photocell_voltage = (
-                        self._read_photocell_voltage()
-                    )
-                    last_photocell_voltage = (
-                        photocell_voltage
-                    )
+                    try:
+                        photocell_voltage = (
+                            self._read_photocell_voltage()
+                        )
+                        last_photocell_voltage = (
+                            photocell_voltage
+                        )
+                    except Exception as error:
+                        self._handle_adam_failure(error)
+                        photocell_voltage = last_photocell_voltage or 0.0
+                        product_at_camera = False
+                        continue
                     product_at_camera = (
                         photocell_voltage
                         < PHOTOCELL_THRESHOLD_VOLTAGE
@@ -568,7 +588,15 @@ class ConveyorController:
                     # GOOD path: crash sensor completes journey
                     # -----------------------------------------
                     elif state == "awaiting_good_completion":
-                        if self.crash_sensor.is_crash_detected():
+                        try:
+                            crash_detected = (
+                                self.crash_sensor.is_crash_detected()
+                            )
+                        except Exception as error:
+                            self._handle_adam_failure(error)
+                            crash_detected = False
+
+                        if crash_detected:
                             self.fan_relay.turn_off()
                             self.buzzer.stop_buzzing()
 
@@ -614,13 +642,17 @@ class ConveyorController:
                     # BAD path: sound sensor confirms impact
                     # -----------------------------------------
                     elif state == "reject_fan_active":
-                        reject_confirmed = (
-                            self.motor_sound.is_motor_loud(
-                                threshold_voltage=(
-                                    REJECT_SOUND_THRESHOLD_VOLTAGE
+                        try:
+                            reject_confirmed = (
+                                self.motor_sound.is_motor_loud(
+                                    threshold_voltage=(
+                                        REJECT_SOUND_THRESHOLD_VOLTAGE
+                                    )
                                 )
                             )
-                        )
+                        except Exception as error:
+                            self._handle_adam_failure(error)
+                            reject_confirmed = False
 
                         if reject_confirmed:
                             self.fan_relay.turn_off()
@@ -669,20 +701,28 @@ class ConveyorController:
                             reject_move_started_at = None
                             reject_fan_started_at = None
 
-                if now - last_heartbeat >= 3.0:
+                if now - last_heartbeat >= 10.0:
                     photocell_text = (
                         f"{last_photocell_voltage:.4f} V"
                         if last_photocell_voltage is not None
                         else "unavailable"
                     )
 
-                    print(
+                    status_text = (
                         f"State: {state} | "
-                        f"Product: "
-                        f"{current_product_id or 'none'} | "
+                        f"Product: {current_product_id or 'none'} | "
                         f"AI4: {photocell_text} | "
                         f"Armed: {photocell_armed}"
                     )
+
+                    if (
+                        status_text != self._last_status_text
+                        or now - self._last_status_time >= 60.0
+                    ):
+                        print(status_text)
+                        self._last_status_text = status_text
+                        self._last_status_time = now
+
                     last_heartbeat = now
 
                 # The working sensor test uses 0.10 s. Do not
@@ -709,6 +749,43 @@ class ConveyorController:
                 self.buzzer.stop_buzzing()
             except Exception:
                 pass
+
+    def _handle_adam_failure(
+        self,
+        error: Exception,
+    ) -> None:
+        if self.adam_connected:
+            print(
+                "ADAM connection lost during operation: "
+                f"{error}"
+            )
+
+        self.adam_connected = False
+        self._attempt_adam_reconnect(
+            time.monotonic()
+        )
+
+    def _attempt_adam_reconnect(
+        self,
+        now: float,
+        ) -> bool:
+            if now - self._last_adam_reconnect_attempt < 10.0:
+                return False
+
+            self._last_adam_reconnect_attempt = now
+            try:
+                self.adam.reconnect()
+                self.adam_connected = True
+                print("ADAM reconnected.")
+                return True
+            except Exception as error:
+                if self.adam_connected:
+                    print(
+                        "Failed to reconnect ADAM: "
+                        f"{error}"
+                    )
+                self.adam_connected = False
+                return False
 
             try:
                 self.adam.write_do2(False)

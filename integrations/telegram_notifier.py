@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import json
 import mimetypes
@@ -26,19 +25,39 @@ LABEL_DISPLAY_NAMES = {
     "fail_defect": "Defective pill",
 }
 
+# The ML may report "good", while this project's training folder is "pass".
+DATASET_FOLDER_BY_LABEL = {
+    "good": "pass",
+    "fail_different": "fail_different",
+    "fail_defect": "fail_defect",
+}
+
+# integrations/telegram_notifier.py -> project root
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 class TelegramNotifier:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.last_update_id: int | None = None
 
-        # Feedback information is stored separately from the main dataset.
-        self.feedback_root = Path("data/telegram_feedback")
+        # Telegram feedback records are kept under the existing storage tree.
+        self.feedback_root = PROJECT_ROOT / "storage" / "feedback"
         self.feedback_log_path = self.feedback_root / "feedback.jsonl"
         self.pending_feedback_path = self.feedback_root / "pending.json"
 
-        # Human-confirmed images are copied here.
-        self.feedback_dataset_dir = Path("datasets/feedback")
+        # Thumbs-up images enter the matching class folder and will be
+        # included automatically the next time training.py is run.
+        self.training_dataset_dir = PROJECT_ROOT / "storage" / "datasets"
+
+        # Thumbs-down only means "wrong"; it does not identify the correct
+        # class, so those images wait here for manual relabelling.
+        self.incorrect_feedback_dir = (
+            PROJECT_ROOT
+            / "storage"
+            / "failures"
+            / "incorrect_predictions"
+        )
 
         self.pending_feedback = self._load_pending_feedback()
 
@@ -310,19 +329,26 @@ class TelegramNotifier:
     def _feedback_keyboard(
         product_id: int,
     ) -> dict[str, object]:
+        """Three buttons that record the actual product class."""
         return {
             "inline_keyboard": [
                 [
                     {
-                        "text": "✅ True — ML correct",
+                        "text": "✅",
                         "callback_data": (
-                            f"feedback:{product_id}:true"
+                            f"actual:{product_id}:good"
                         ),
                     },
                     {
-                        "text": "❌ False — ML wrong",
+                        "text": "🟨",
                         "callback_data": (
-                            f"feedback:{product_id}:false"
+                            f"actual:{product_id}:fail_defect"
+                        ),
+                    },
+                    {
+                        "text": "🟥",
+                        "callback_data": (
+                            f"actual:{product_id}:fail_different"
                         ),
                     },
                 ]
@@ -373,16 +399,11 @@ class TelegramNotifier:
         """
         predicted_label = predicted_label.strip().lower()
 
-        if predicted_label not in FEEDBACK_LABELS:
-            raise ValueError(
-                "Unknown predicted label "
-                f"'{predicted_label}'. Expected one of "
-                f"{FEEDBACK_LABELS}."
-            )
-
+        # The three buttons record the ACTUAL class. Therefore an unusual
+        # prediction such as fail_uncertain must not suppress the buttons.
         result_name = LABEL_DISPLAY_NAMES.get(
             predicted_label,
-            predicted_label,
+            predicted_label.replace("_", " "),
         )
 
         icon = (
@@ -398,7 +419,8 @@ class TelegramNotifier:
             f"Confidence: "
             f"{self._format_confidence(confidence)}\n"
             f"Image: sharpest of 3 captured frames\n\n"
-            f"Was the ML prediction correct?"
+            f"Select the actual class:\n"
+            f"✅ Pass   🟨 Defect   🟥 Different"
         )
 
         try:
@@ -626,9 +648,20 @@ class TelegramNotifier:
             pending.get("telegram_message_id", 0)
         )
 
+        dataset_folder = DATASET_FOLDER_BY_LABEL.get(
+            actual_label
+        )
+
+        if dataset_folder is None:
+            print(
+                "No training-dataset folder mapping for "
+                f"feedback label: {actual_label}"
+            )
+            return None
+
         destination_dir = (
-            self.feedback_dataset_dir
-            / actual_label
+            self.training_dataset_dir
+            / dataset_folder
         )
 
         destination_dir.mkdir(
@@ -655,6 +688,142 @@ class TelegramNotifier:
                 f"image: {error}"
             )
             return None
+
+    def _copy_incorrect_image(
+        self,
+        pending: dict[str, object],
+    ) -> str | None:
+        """Save a wrong prediction for later human relabelling."""
+        source_path = Path(str(pending.get("image_path", "")))
+
+        if not source_path.exists():
+            print(
+                "Incorrect feedback recorded, but source image "
+                f"was not found: {source_path}"
+            )
+            return None
+
+        self.incorrect_feedback_dir.mkdir(parents=True, exist_ok=True)
+
+        product_id = int(pending.get("product_id", 0))
+        message_id = int(pending.get("telegram_message_id", 0))
+        predicted_label = str(
+            pending.get("predicted_label", "unknown")
+        )
+
+        destination_path = self.incorrect_feedback_dir / (
+            f"P{product_id:03d}_telegram_{message_id}_"
+            f"predicted_{predicted_label}_{source_path.name}"
+        )
+
+        counter = 1
+        while destination_path.exists():
+            destination_path = self.incorrect_feedback_dir / (
+                f"P{product_id:03d}_telegram_{message_id}_{counter}_"
+                f"predicted_{predicted_label}_{source_path.name}"
+            )
+            counter += 1
+
+        try:
+            shutil.copy2(source_path, destination_path)
+
+            metadata_path = destination_path.with_suffix(
+                destination_path.suffix + ".json"
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "product_id": product_id,
+                        "predicted_label": predicted_label,
+                        "confidence": pending.get("confidence"),
+                        "source_image_path": str(source_path),
+                        "telegram_message_id": message_id,
+                        "feedback": "incorrect",
+                        "needs_manual_label": True,
+                        "saved_at_utc": datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return str(destination_path)
+
+        except OSError as error:
+            print(f"Unable to save incorrect feedback image: {error}")
+            return None
+
+    def _finalise_incorrect_feedback(
+        self,
+        callback_query: dict[str, object],
+        pending_key: str,
+    ) -> None:
+        pending = self.pending_feedback.get(pending_key)
+
+        if not pending:
+            self._answer_callback(
+                callback_query_id=str(callback_query.get("id", "")),
+                text=(
+                    "Feedback was already recorded "
+                    "or the product record is missing."
+                ),
+                show_alert=True,
+            )
+            return
+
+        user = callback_query.get("from") or {}
+        message = callback_query.get("message") or {}
+        copied_image_path = self._copy_incorrect_image(pending)
+
+        self._append_feedback_log(
+            {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "product_id": pending.get("product_id"),
+                "predicted_label": pending.get("predicted_label"),
+                "actual_label": None,
+                "ml_correct": False,
+                "confidence": pending.get("confidence"),
+                "original_image_path": pending.get("image_path"),
+                "feedback_image_path": copied_image_path,
+                "needs_manual_label": True,
+                "telegram_chat_id": pending.get("telegram_chat_id"),
+                "telegram_message_id": pending.get("telegram_message_id"),
+                "reviewer_id": user.get("id"),
+                "reviewer_username": user.get("username"),
+                "reviewer_first_name": user.get("first_name"),
+            }
+        )
+
+        chat = message.get("chat") or {}
+        chat_id = str(chat.get("id", ""))
+        message_id = int(message.get("message_id", 0))
+        current_caption = str(message.get("caption", ""))
+        final_caption = (
+            f"{current_caption}\n\n"
+            "👎 ML prediction marked incorrect.\n"
+            "Saved for manual relabelling before retraining."
+        )
+
+        try:
+            self._edit_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=final_caption,
+                reply_markup={"inline_keyboard": []},
+            )
+        except Exception as error:
+            print(
+                "Incorrect feedback was saved, but Telegram message "
+                f"update failed: {error}"
+            )
+
+        self.pending_feedback.pop(pending_key, None)
+        self._save_pending_feedback()
+        self._answer_callback(
+            callback_query_id=str(callback_query.get("id", "")),
+            text="Saved for manual relabelling.",
+        )
 
     @staticmethod
     def _chat_matches(
@@ -851,6 +1020,12 @@ class TelegramNotifier:
             else "❌"
         )
 
+        feedback_status = (
+            "ML prediction confirmed correct."
+            if ml_correct
+            else "ML prediction corrected by human feedback."
+        )
+
         actual_display = (
             LABEL_DISPLAY_NAMES.get(
                 actual_label,
@@ -858,10 +1033,17 @@ class TelegramNotifier:
             )
         )
 
+        dataset_folder = DATASET_FOLDER_BY_LABEL.get(
+            actual_label,
+            actual_label,
+        )
+
         final_caption = (
             f"{current_caption}\n\n"
-            f"{feedback_icon} Human feedback recorded\n"
-            f"Ground truth: {actual_display}"
+            f"{feedback_icon} {feedback_status}\n"
+            f"Actual class: {actual_display}\n"
+            f"Added to training folder: "
+            f"storage/datasets/{dataset_folder}"
         )
 
         try:
@@ -887,11 +1069,17 @@ class TelegramNotifier:
         )
         self._save_pending_feedback()
 
+        callback_text = (
+            "Correct prediction saved."
+            if ml_correct
+            else f"Corrected to {actual_display}."
+        )
+
         self._answer_callback(
             callback_query_id=str(
                 callback_query.get("id", "")
             ),
-            text="Feedback saved.",
+            text=callback_text,
         )
 
     def _handle_callback_query(
@@ -1013,63 +1201,10 @@ class TelegramNotifier:
                 return
 
             if value == "false":
-                predicted_label = str(
-                    pending.get(
-                        "predicted_label",
-                        "",
-                    )
+                self._finalise_incorrect_feedback(
+                    callback_query=callback_query,
+                    pending_key=pending_key,
                 )
-
-                current_caption = str(
-                    message.get("caption", "")
-                )
-
-                if (
-                    "Choose the correct class below"
-                    not in current_caption
-                ):
-                    current_caption += (
-                        "\n\n❌ ML marked as wrong.\n"
-                        "Choose the correct class below:"
-                    )
-
-                try:
-                    self._edit_caption(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        caption=current_caption,
-                        reply_markup=(
-                            self._correction_keyboard(
-                                product_id=(
-                                    pending_product_id
-                                ),
-                                predicted_label=(
-                                    predicted_label
-                                ),
-                            )
-                        ),
-                    )
-
-                    self._answer_callback(
-                        callback_query_id,
-                        "Select the correct class.",
-                    )
-
-                except Exception as error:
-                    print(
-                        "Unable to display correction "
-                        f"buttons: {error}"
-                    )
-
-                    self._answer_callback(
-                        callback_query_id,
-                        (
-                            "Unable to display the "
-                            "class options."
-                        ),
-                        show_alert=True,
-                    )
-
                 return
 
         if action == "actual":

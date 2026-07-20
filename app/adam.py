@@ -28,6 +28,26 @@ class Adam6717Connection:
             f"{self.settings.adam_ip}:{self.settings.adam_port}"
         )
 
+    @property
+    def is_connected(self) -> bool:
+        return bool(
+            getattr(self.client, "connected", False)
+        )
+
+    def reconnect(self) -> None:
+        try:
+            self.client.close()
+        except Exception:
+            pass
+
+        self.client = ModbusTcpClient(
+            host=self.settings.adam_ip,
+            port=self.settings.adam_port,
+            timeout=3,
+        )
+
+        self.connect()
+
     # DI
 
     def read_di(self, address: int) -> bool:

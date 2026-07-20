@@ -53,13 +53,13 @@ def main() -> None:
         if adam_connected:
             print("ADAM control is active.")
         else:
-            print("ADAM control is disabled; running in offline/demo mode.")
+            print("ADAM control is disabled; running in offline mode.")
         print("Press Ctrl+C to stop.")
         print()
 
-        # ----------------------------------------------------
-        # 5. The ONE central infinite loop in the project.
-        # ----------------------------------------------------
+      
+        # The central infinite loop in the project.
+        
         while True:
             time.sleep(settings.poll_interval_seconds)
 
@@ -70,7 +70,7 @@ def main() -> None:
 
     finally:
         try:
-            adam.write_do1(False)
+            adam.write_do2(False)
         except Exception:
             pass
 

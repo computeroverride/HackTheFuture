@@ -28,9 +28,7 @@ class Adam6717Connection:
             f"{self.settings.adam_ip}:{self.settings.adam_port}"
         )
 
-    # ========================================================
-    # GENERIC DIGITAL INPUT
-    # ========================================================
+    # DI
 
     def read_di(self, address: int) -> bool:
         result = self.client.read_coils(
@@ -46,9 +44,7 @@ class Adam6717Connection:
 
         return bool(result.bits[0])
 
-    # ========================================================
-    # GENERIC DIGITAL OUTPUT
-    # ========================================================
+    # DO
 
     def read_do(self, address: int) -> bool:
         result = self.client.read_coils(
@@ -76,9 +72,7 @@ class Adam6717Connection:
                 f"Could not write DO address {address}: {result}"
             )
 
-    # ========================================================
-    # GENERIC ANALOG INPUT
-    # ========================================================
+    # AI
 
     def read_ai_voltage(self, address: int) -> float:
         result = self.client.read_holding_registers(
@@ -108,10 +102,7 @@ class Adam6717Connection:
 
         return value
 
-    # ========================================================
-    # OLD WRAPPERS
-    # Keep these so older code still works.
-    # ========================================================
+    # Wrappers
 
     def read_di2(self) -> bool:
         return self.read_di(self.settings.di2_address)
@@ -122,18 +113,16 @@ class Adam6717Connection:
     def write_do0(self, fan_on: bool) -> None:
         self.write_do(self.settings.do0_address, fan_on)
 
-    def read_do1(self) -> bool:
-        return self.read_do(self.settings.do1_address)
+    def read_do2(self) -> bool:
+        return self.read_do(self.settings.do2_address)
 
-    def write_do1(self, buzzer_on: bool) -> None:
-        self.write_do(self.settings.do1_address, buzzer_on)
+    def write_do2(self, buzzer_on: bool) -> None:
+        self.write_do(self.settings.do2_address, buzzer_on)
 
     def read_ai2_voltage(self) -> float:
         return self.read_ai_voltage(self.settings.ai2_address)
 
-    # ========================================================
-    # CLOSE
-    # ========================================================
+    # Close
 
     def close(self) -> None:
         self.client.close()

@@ -42,9 +42,7 @@ class EdgeHubPublisher:
         self.last_protocol_heartbeat_time = 0.0
         self.connected = False
 
-    # ========================================================
-    # CONNECTION
-    # ========================================================
+    # Connection
     def _on_connection_state_change(
         self,
         *args,
@@ -90,9 +88,7 @@ class EdgeHubPublisher:
         finally:
             self.connected = False
 
-    # ========================================================
-    # MESSAGE TRANSPORT
-    # ========================================================
+    # Transport
     def _send_edgehub_message(
         self,
         message_type: str,
@@ -129,9 +125,7 @@ class EdgeHubPublisher:
         self._send_edgehub_message("conn", HeartbeatMessage().getJson())
         self.last_protocol_heartbeat_time = now
 
-    # ========================================================
-    # TAG CONFIGURATION
-    # ========================================================
+    # Tags
     def upload_tag_configuration(self) -> None:
         """
         Create/update the ADAM-6717 logical device and tags.

@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+storage/datasets/fail_defect/*
+storage/datasets/fail_different/*
+storage/datasets/pass/*
+storage/test/*

@@ -25,6 +25,13 @@ DEFAULT_FAILURE_DIR = (
     / "failures"
 )
 
+DEFAULT_PASS_DIR = (
+    PROJECT_ROOT
+    / "storage"
+    / "predictions"
+    / "pass"
+)
+
 
 def open_camera(camera_index: int = 0):
     for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]:
@@ -54,6 +61,7 @@ class PillInspector:
         burst_delay_seconds: float = 0.12,
         min_confidence: float = 0.60,
         failure_dir: Path | str = DEFAULT_FAILURE_DIR,
+        pass_dir: Path | str = DEFAULT_PASS_DIR,
     ) -> None:
         self.predictor = PillPredictor(
             model_path,
@@ -66,6 +74,7 @@ class PillInspector:
         )
 
         self.failure_dir = Path(failure_dir)
+        self.pass_dir = Path(pass_dir)
 
         self.camera = open_camera(camera_index)
 
@@ -77,10 +86,7 @@ class PillInspector:
 
     @staticmethod
     def sharpness_score(frame) -> float:
-        """
-        Larger Laplacian variance generally means
-        the image has sharper edges.
-        """
+      
 
         grayscale = cv2.cvtColor(
             frame,
@@ -133,45 +139,50 @@ class PillInspector:
             self.sharpness_score(frame)
         )
 
-        result["saved_image"] = None
+        # Telegram needs an image for every classification, including passes.
+        #
+        # Pass images are stored under:
+        #     storage/predictions/pass/
+        #
+        # Failed or uncertain images remain under:
+        #     storage/failures/
+        output_dir = (
+            self.pass_dir
+            if result["is_pass"]
+            else self.failure_dir
+        )
 
-        # Pass images are not retained.
-        # Only the selected sharpest failure image
-        # is stored.
-        if not result["is_pass"]:
-            self.failure_dir.mkdir(
-                parents=True,
-                exist_ok=True,
+        output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S_%f"
+        )
+
+        filename = (
+            f"{product_id}_"
+            f"{result['final_label']}_"
+            f"{timestamp}.jpg"
+        )
+
+        output_path = output_dir / filename
+
+        saved = cv2.imwrite(
+            str(output_path),
+            frame,
+        )
+
+        if not saved:
+            raise RuntimeError(
+                "Could not save inspection image: "
+                f"{output_path}"
             )
 
-            timestamp = datetime.now().strftime(
-                "%Y%m%d_%H%M%S_%f"
-            )
-
-            filename = (
-                f"{product_id}_"
-                f"{result['final_label']}_"
-                f"{timestamp}.jpg"
-            )
-
-            output_path = (
-                self.failure_dir / filename
-            )
-
-            saved = cv2.imwrite(
-                str(output_path),
-                frame,
-            )
-
-            if not saved:
-                raise RuntimeError(
-                    "Could not save failure image: "
-                    f"{output_path}"
-                )
-
-            result["saved_image"] = str(
-                output_path
-            )
+        # main.py reads this value and sends the image to Telegram
+        # together with the three class-feedback buttons.
+        result["saved_image"] = str(output_path)
 
         return result
 

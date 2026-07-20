@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 import json
 import mimetypes
@@ -61,6 +62,12 @@ class TelegramNotifier:
 
         self.pending_feedback = self._load_pending_feedback()
 
+        # Completed Telegram feedback events wait here until main.py
+        # publishes them to EdgeHub.
+        self.completed_feedback_events: list[
+            dict[str, object]
+        ] = []
+
         # Optional comma-separated Telegram user IDs.
         #
         # Example:
@@ -93,12 +100,7 @@ class TelegramNotifier:
                 )
 
     def _chat_id(self) -> str:
-        """
-        Chat used for manually typed feedback messages.
-
-        Button callbacks are checked against telegram_chat_id because the
-        inline keyboard is attached directly to the channel photo.
-        """
+      
         if self.settings.telegram_feedback_chat_id:
             return self.settings.telegram_feedback_chat_id
 
@@ -190,12 +192,7 @@ class TelegramNotifier:
         caption: str,
         reply_markup: dict[str, object] | None = None,
     ) -> dict[str, Any] | None:
-        """
-        Send a photo and optionally attach Telegram inline buttons.
-
-        Returns Telegram's sent message information so its message ID can
-        be associated with the local image and product ID.
-        """
+       
         if not self.settings.telegram_enabled:
             return None
 
@@ -313,13 +310,7 @@ class TelegramNotifier:
 
     @staticmethod
     def _format_confidence(confidence: float) -> str:
-        """
-        Supports confidence represented as either:
-
-        0.94
-        or
-        94.0
-        """
+       
         if 0 <= confidence <= 1:
             return f"{confidence:.1%}"
 
@@ -329,7 +320,7 @@ class TelegramNotifier:
     def _feedback_keyboard(
         product_id: int,
     ) -> dict[str, object]:
-        """Three buttons that record the actual product class."""
+    
         return {
             "inline_keyboard": [
                 [
@@ -391,12 +382,7 @@ class TelegramNotifier:
         confidence: float,
         image_path: Path,
     ) -> None:
-        """
-        Send any inspection result: good, fail_different or fail_defect.
-
-        During prototype testing, call this for every product so you can
-        discover both false positives and false negatives.
-        """
+        
         predicted_label = predicted_label.strip().lower()
 
         # The three buttons record the ACTUAL class. Therefore an unusual
@@ -556,14 +542,7 @@ class TelegramNotifier:
         image_path: Path,
         product_id: int,
     ) -> Path:
-        """
-        Rename an image using:
-
-        P<product ID>_<timestamp>.<original extension>
-
-        Example:
-        P001_20260720_143522.jpg
-        """
+       
         image_path = Path(image_path)
 
         if not image_path.exists():
@@ -693,7 +672,7 @@ class TelegramNotifier:
         self,
         pending: dict[str, object],
     ) -> str | None:
-        """Save a wrong prediction for later human relabelling."""
+       
         source_path = Path(str(pending.get("image_path", "")))
 
         if not source_path.exists():
@@ -1005,6 +984,13 @@ class TelegramNotifier:
             feedback_record
         )
 
+        # Keep a copy for main.py. The Telegram callback is handled
+        # inside this notifier, but EdgeHub publishing belongs to the
+        # main controller.
+        self.completed_feedback_events.append(
+            dict(feedback_record)
+        )
+
         chat = message.get("chat") or {}
         chat_id = str(chat.get("id", ""))
         message_id = int(
@@ -1224,14 +1210,7 @@ class TelegramNotifier:
     def get_feedback_messages(
         self,
     ) -> list[dict[str, object]]:
-        """
-        Poll Telegram.
-
-        Callback button events are processed internally.
-
-        Normal typed messages are still returned so this remains compatible
-        with the previous implementation.
-        """
+       
         if not self.settings.telegram_enabled:
             return []
 
@@ -1331,6 +1310,14 @@ class TelegramNotifier:
             )
 
         return messages
+
+    def pop_feedback_events(
+        self,
+    ) -> list[dict[str, object]]:
+      
+        events = list(self.completed_feedback_events)
+        self.completed_feedback_events.clear()
+        return events
 
     def alarm(self, message: str) -> None:
         self.send(

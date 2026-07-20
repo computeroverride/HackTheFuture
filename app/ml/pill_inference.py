@@ -50,10 +50,7 @@ def load_checkpoint(
     path: Path,
     device: torch.device,
 ) -> dict[str, Any]:
-    """
-    Supports both newer and older PyTorch versions.
-    """
-
+  
     try:
         return torch.load(
             path,
@@ -175,9 +172,7 @@ class PillPredictor:
         self,
         bgr_frame,
     ) -> dict[str, Any]:
-        """
-        Used later by the webcam service.
-        """
+       
 
         rgb_frame = cv2.cvtColor(
             bgr_frame,

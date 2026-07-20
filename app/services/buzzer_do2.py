@@ -1,10 +1,5 @@
 class BuzzerDO2:
-    """
-    Buzzer output.
-
-    Function:
-    - Controls buzzer on physical DO2.
-    """
+   
 
     def __init__(self, adam, settings):
         self.adam = adam

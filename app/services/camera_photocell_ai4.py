@@ -1,11 +1,5 @@
 class CameraPhotocellAI4:
-    """
-    Camera station detector.
-
-    Function:
-    - Reads photocell on AI4.
-    - Returns whether product is at camera station.
-    """
+    
 
     def __init__(
         self,

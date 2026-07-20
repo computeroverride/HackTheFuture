@@ -7,3 +7,4 @@ torch
 torchvision
 Pillow
 numpy
+pytest>=8.0,<9.0

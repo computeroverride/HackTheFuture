@@ -1,12 +1,5 @@
 class MotorSoundAI0:
-    """
-    Motor sound sensor.
-
-    Function:
-    - Reads sound sensor on AI0.
-    - Returns voltage value.
-    """
-
+ 
     def __init__(self, adam, settings):
         self.adam = adam
         self.settings = settings

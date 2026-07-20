@@ -10,3 +10,4 @@ storage/failures/
 storage/test/*
 tests/test_images/*
 test_webcam*
+*ini

@@ -1,12 +1,5 @@
 class FanRelayDO0:
-    """
-    Fan relay output.
-
-    Function:
-    - Controls relay on DO0.
-    - Used to turn fan ON/OFF.
-    """
-
+  
     def __init__(self, adam, settings):
         self.adam = adam
         self.settings = settings

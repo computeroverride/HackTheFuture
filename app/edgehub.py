@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import time
 from datetime import datetime
+from typing import Any
 
 from azure.iot.device import IoTHubDeviceClient, Message
 
 import edgesync360edgehubedgesdk.Common.Constants as constant
 import edgesync360edgehubedgesdk.Common.Converter as converter
-
 from edgesync360edgehubedgesdk.Model.Edge import (
     AnalogTagConfig,
     DeviceConfig,
@@ -25,52 +27,66 @@ from edgesync360edgehubedgesdk.Model.MQTTMessage import (
 from app.settings import Settings
 
 
-class EdgeHubPublisher:
-    """
-    Publishes ADAM-6717 values to EdgeHub.
+EDGEHUB_REPORTING_INTERVAL_SECONDS = 60.0
 
-    This uses the SCADA device SAS token copied from EdgeHub.
-    The Python laptop acts as the data gateway.
-    """
+
+class EdgeHubPublisher:
+
 
     def __init__(self, settings: Settings):
         self.settings = settings
         self.client = IoTHubDeviceClient.create_from_sastoken(
             settings.edgehub_sas_token
         )
-        self.client.on_connection_state_change = self._on_connection_state_change
-        self.last_protocol_heartbeat_time = 0.0
+        self.client.on_connection_state_change = (
+            self._on_connection_state_change
+        )
+
         self.connected = False
-        # track previous connection state to avoid repeated identical logs
-        self._prev_connected_state: bool | None = None
-        # track last time live data was actually published to EdgeHub
+        self._previous_connected_state: bool | None = None
+        self._last_protocol_heartbeat_time = 0.0
+
+        # Set when the connection is established. This prevents a data
+        # snapshot from being sent immediately at startup; the first data
+        # snapshot is due only after the full configured interval.
         self._last_data_publish_time = 0.0
 
-    # Connection
+   
+    # Connection and transport
+   
+
+    @property
+    def reporting_interval_seconds(self) -> float:
+        return EDGEHUB_REPORTING_INTERVAL_SECONDS
+
     def _on_connection_state_change(
         self,
-        *args,
-        **kwargs,
+        *args: object,
+        **kwargs: object,
     ) -> None:
-        # Only print when the connection state actually changes to avoid flooding
+        del args, kwargs
+
         new_state = bool(self.client.connected)
-        if self._prev_connected_state is None or new_state != self._prev_connected_state:
+
+        if (
+            self._previous_connected_state is None
+            or new_state != self._previous_connected_state
+        ):
             self.connected = new_state
-            if self.connected:
-                print("EdgeHub Azure IoT connection established.")
-            else:
-                print("EdgeHub Azure IoT connection lost.")
-            self._prev_connected_state = new_state
+            print(
+                "EdgeHub Azure IoT connection established."
+                if new_state
+                else "EdgeHub Azure IoT connection lost."
+            )
+            self._previous_connected_state = new_state
 
     def connect_and_upload_tags(self) -> None:
-        """
-        Connect to EdgeHub, mark the Python gateway online,
-        then create/update all dashboard tags.
-        """
-
         self.client.connect()
+
         if not self.client.connected:
-            raise ConnectionError("Could not connect to EdgeHub using the SCADA SAS token.")
+            raise ConnectionError(
+                "Could not connect to EdgeHub using the SCADA SAS token."
+            )
 
         self.connected = True
 
@@ -78,238 +94,420 @@ class EdgeHubPublisher:
             message_type="conn",
             payload=ConnectMessage().getJson(),
         )
-
         self._send_protocol_heartbeat(force=True)
-
         self.upload_tag_configuration()
-        print(f"EdgeHub ready. Node ID: {self.settings.edgehub_node_id}")
+
+        # Start the 60-second data interval after connection/configuration.
+        self._last_data_publish_time = time.monotonic()
+
+        print(
+            "EdgeHub ready. "
+            f"Node ID: {self.settings.edgehub_node_id}"
+        )
+        print(
+            "EdgeHub product data interval: "
+            f"{self.reporting_interval_seconds:.0f} seconds."
+        )
 
     def disconnect(self) -> None:
-        """Tell EdgeHub the gateway is stopping, then disconnect."""
-
         try:
             if self.client.connected:
-                self._send_edgehub_message("conn", DisconnectMessage().getJson())
+                self._send_edgehub_message(
+                    message_type="conn",
+                    payload=DisconnectMessage().getJson(),
+                )
                 self.client.disconnect()
         except Exception as error:
             print(f"EdgeHub disconnect warning: {error}")
         finally:
             self.connected = False
 
-    # Transport
     def _send_edgehub_message(
         self,
         message_type: str,
         payload: str,
     ) -> None:
-        """
-        EdgeHub protocol message types:
-
-        conn = connect / disconnect / heartbeat
-        cfg  = tag configuration
-        data = live tag data
-        """
-
         if not self.client.connected:
             raise ConnectionError("EdgeHub is not connected.")
 
-        azure_message = Message(payload)
-        azure_message.custom_properties[message_type] = ""
-        self.client.send_message(azure_message)
+        message = Message(payload)
+        message.custom_properties[message_type] = ""
+        self.client.send_message(message)
 
     def _send_protocol_heartbeat(
         self,
         force: bool = False,
     ) -> None:
-        """Keep the logical SCADA gateway online in EdgeHub."""
-
         now = time.monotonic()
         heartbeat_due = (
-            now - self.last_protocol_heartbeat_time
-            >= self.settings.edgehub_protocol_heartbeat_seconds
+            now - self._last_protocol_heartbeat_time
+            >= self.reporting_interval_seconds
         )
+
         if not force and not heartbeat_due:
             return
-        self._send_edgehub_message("conn", HeartbeatMessage().getJson())
-        self.last_protocol_heartbeat_time = now
 
-    # Tags
+        self._send_edgehub_message(
+            message_type="conn",
+            payload=HeartbeatMessage().getJson(),
+        )
+        self._last_protocol_heartbeat_time = now
+
+    def data_publish_due(
+        self,
+        now: float | None = None,
+    ) -> bool:
+        if now is None:
+            now = time.monotonic()
+
+        return (
+            now - self._last_data_publish_time
+            >= self.reporting_interval_seconds
+        )
+
+   
+    # Tag configuration helpers
+   
+
+    @staticmethod
+    def _add_text_tag(
+        device: DeviceConfig,
+        name: str,
+        description: str,
+    ) -> None:
+        device.textTagList.append(
+            TextTagConfig(
+                name=name,
+                description=description,
+                readOnly=True,
+                arraySize=0,
+            )
+        )
+
+    @staticmethod
+    def _add_boolean_tag(
+        device: DeviceConfig,
+        name: str,
+        description: str,
+        state0: str,
+        state1: str,
+    ) -> None:
+        device.discreteTagList.append(
+            DiscreteTagConfig(
+                name=name,
+                description=description,
+                readOnly=True,
+                arraySize=0,
+                state0=state0,
+                state1=state1,
+                state2=None,
+                state3=None,
+                state4=None,
+                state5=None,
+                state6=None,
+                state7=None,
+            )
+        )
+
+    @staticmethod
+    def _add_number_tag(
+        device: DeviceConfig,
+        name: str,
+        description: str,
+        span_low: float,
+        span_high: float,
+        unit: str,
+        fraction_digits: int = 0,
+    ) -> None:
+        device.analogTagList.append(
+            AnalogTagConfig(
+                name=name,
+                description=description,
+                readOnly=True,
+                arraySize=0,
+                spanHigh=span_high,
+                spanLow=span_low,
+                engineerUnit=unit,
+                integerDisplayFormat=0,
+                fractionDisplayFormat=fraction_digits,
+            )
+        )
+
     def upload_tag_configuration(self) -> None:
-        """
-        Create/update the ADAM-6717 logical device and tags.
-        Safe to call every time the gateway starts.
-        """
-
+      
         edge_config = EdgeConfig()
-        node_config = NodeConfig(nodeType=constant.EdgeType["Gateway"])
-        device_config = DeviceConfig(
+        node_config = NodeConfig(
+            nodeType=constant.EdgeType["Gateway"]
+        )
+        device = DeviceConfig(
             id=self.settings.edgehub_device_id,
-            name="ADAM-6717 Conveyor I/O",
-            deviceType="ADAM-6717",
+            name="CMIO Product Monitoring",
+            deviceType="ADAM-6717 + Vision",
             description=(
-                "Python gateway for ADAM-6717 DI, DO and AI data"
+                "End-user product flow, inspection, rejection and "
+                "completion monitoring. Updated once per minute."
             ),
         )
 
-        # ----------------------------------------------------
-        # DI2 button
-        # ----------------------------------------------------
-        device_config.discreteTagList.append(
-            DiscreteTagConfig(
-                name="di2_button_live",
-                description="Current DI2 button state",
-                readOnly=True,
-                arraySize=0,
-                state0="Released",
-                state1="Pressed",
-                state2=None,
-                state3=None,
-                state4=None,
-                state5=None,
-                state6=None,
-                state7=None,
-            )
+        # -------------------------------
+        # System and active product
+        # -------------------------------
+        self._add_boolean_tag(
+            device,
+            "adam_connected",
+            "Whether the ADAM-6717 gateway is connected",
+            "Disconnected",
+            "Connected",
+        )
+        self._add_boolean_tag(
+            device,
+            "camera_available",
+            "Whether the vision inspection service is available",
+            "Unavailable",
+            "Available",
+        )
+        self._add_boolean_tag(
+            device,
+            "product_in_progress",
+            "Whether a product is currently being processed",
+            "No product",
+            "In progress",
+        )
+        self._add_text_tag(
+            device,
+            "current_product_id",
+            "Identifier of the product currently in progress",
+        )
+        self._add_text_tag(
+            device,
+            "process_state",
+            "Current stage of the product workflow",
+        )
+        self._add_text_tag(
+            device,
+            "last_product_event",
+            "Most recent product-flow event",
+        )
+        self._add_text_tag(
+            device,
+            "last_completed_product_id",
+            "Most recently completed or rejected product",
         )
 
-        # ----------------------------------------------------
-        # DO0 fan relay
-        # ----------------------------------------------------
-        device_config.discreteTagList.append(
-            DiscreteTagConfig(
-                name="fan_do0_state",
-                description="Current DO0 fan relay state",
-                readOnly=True,
-                arraySize=0,
-                state0="OFF",
-                state1="ON",
-                state2=None,
-                state3=None,
-                state4=None,
-                state5=None,
-                state6=None,
-                state7=None,
-            )
+        # -------------------------------
+        # Inspection and human feedback
+        # -------------------------------
+        self._add_text_tag(
+            device,
+            "classification_status",
+            "Current or latest GOOD, BAD or PENDING status",
+        )
+        self._add_text_tag(
+            device,
+            "ml_prediction",
+            "Current or latest ML predicted class",
+        )
+        self._add_number_tag(
+            device,
+            "ml_confidence_percent",
+            "Current or latest ML confidence",
+            0,
+            100,
+            "%",
+            fraction_digits=1,
+        )
+        self._add_text_tag(
+            device,
+            "feedback_product_id",
+            "Product ID for the latest Telegram feedback",
+        )
+        self._add_text_tag(
+            device,
+            "feedback_status",
+            "Latest feedback state: Pending, Correct or Incorrect",
+        )
+        self._add_text_tag(
+            device,
+            "actual_class",
+            "Latest human-confirmed product class",
+        )
+        self._add_boolean_tag(
+            device,
+            "feedback_received",
+            "Whether feedback has been received for the latest feedback product",
+            "Pending",
+            "Received",
+        )
+        self._add_boolean_tag(
+            device,
+            "ml_prediction_correct",
+            "Whether the latest human-confirmed prediction was correct",
+            "Incorrect",
+            "Correct",
         )
 
-        # ----------------------------------------------------
-        # Button press count
-        # ----------------------------------------------------
-        device_config.analogTagList.append(
-            AnalogTagConfig(
-                name="button_press_count",
-                description="Number of DI2 button presses since startup",
-                readOnly=True,
-                arraySize=0,
-                spanHigh=100000,
-                spanLow=0,
-                engineerUnit="presses",
-                integerDisplayFormat=0,
-                fractionDisplayFormat=0,
-            )
+        # -------------------------------
+        # Current sensors and actuators
+        # -------------------------------
+        self._add_boolean_tag(
+            device,
+            "product_at_camera_now",
+            "Whether the photocell currently detects a product at the camera",
+            "Clear",
+            "Detected",
+        )
+        self._add_boolean_tag(
+            device,
+            "completion_sensor_active_now",
+            "Whether the completion crash sensor is currently active",
+            "Clear",
+            "Active",
+        )
+        self._add_boolean_tag(
+            device,
+            "reject_fan_on",
+            "Current DO0 reject-fan relay state",
+            "OFF",
+            "ON",
+        )
+        self._add_boolean_tag(
+            device,
+            "buzzer_on",
+            "Current DO2 buzzer state",
+            "Silent",
+            "Active",
+        )
+        self._add_boolean_tag(
+            device,
+            "alarm_active",
+            "Whether a product-monitoring alarm is active",
+            "Normal",
+            "Alarm",
+        )
+        self._add_text_tag(
+            device,
+            "last_alarm_message",
+            "Latest product-monitoring alarm message",
+        )
+        self._add_boolean_tag(
+            device,
+            "last_reject_confirmed",
+            "Whether the most recent rejection was confirmed",
+            "Not confirmed",
+            "Confirmed",
         )
 
-        # ----------------------------------------------------
-        # Button/fan event text
-        # ----------------------------------------------------
-        device_config.textTagList.append(
-            TextTagConfig(
-                name="last_button_event",
-                description="Latest DI2 button and DO0 fan action",
-                readOnly=True,
-                arraySize=0,
-            )
+        # -------------------------------
+        # Events observed in the last 60-second window
+        # -------------------------------
+        window_boolean_tags = (
+            (
+                "button_triggered_60s",
+                "Entry button was triggered during the reporting window",
+            ),
+            (
+                "photocell_triggered_60s",
+                "Camera photocell was triggered during the reporting window",
+            ),
+            (
+                "completion_detected_60s",
+                "Good-product completion was detected during the reporting window",
+            ),
+            (
+                "reject_impact_detected_60s",
+                "Reject-bin impact was detected during the reporting window",
+            ),
+            (
+                "fan_activated_60s",
+                "Reject fan was activated during the reporting window",
+            ),
+            (
+                "buzzer_activated_60s",
+                "Buzzer was activated during the reporting window",
+            ),
         )
 
-        # ----------------------------------------------------
-        # AI2 temperature sensor voltage
-        # ----------------------------------------------------
-        device_config.analogTagList.append(
-            AnalogTagConfig(
-                name="ai2_temperature_voltage",
-                description="AI2 voltage from temperature sensor",
-                readOnly=True,
-                arraySize=0,
-                spanHigh=10,
-                spanLow=-10,
-                engineerUnit="V",
-                integerDisplayFormat=0,
-                fractionDisplayFormat=3,
+        for name, description in window_boolean_tags:
+            self._add_boolean_tag(
+                device,
+                name,
+                description,
+                "No",
+                "Yes",
             )
+
+        # -------------------------------
+        # Per-minute and total production counters
+        # -------------------------------
+        per_minute_number_tags = (
+            ("products_started_60s", "Products started in the last reporting window"),
+            ("products_inspected_60s", "Products inspected in the last reporting window"),
+            ("products_completed_60s", "Good products completed in the last reporting window"),
+            ("products_rejected_60s", "Products with confirmed rejection in the last reporting window"),
+            ("reject_timeouts_60s", "Unconfirmed reject attempts in the last reporting window"),
+            ("feedback_count_60s", "Human feedback responses in the last reporting window"),
         )
 
-        # ----------------------------------------------------
-        # DO1 buzzer
-        # ----------------------------------------------------
-        device_config.discreteTagList.append(
-            DiscreteTagConfig(
-                name="buzzer_do1_state",
-                description="Current DO1 buzzer state",
-                readOnly=True,
-                arraySize=0,
-                state0="OFF",
-                state1="ON",
-                state2=None,
-                state3=None,
-                state4=None,
-                state5=None,
-                state6=None,
-                state7=None,
+        for name, description in per_minute_number_tags:
+            self._add_number_tag(
+                device,
+                name,
+                description,
+                0,
+                100000,
+                "products",
             )
+
+        total_number_tags = (
+            ("inspection_count_total", "Products inspected since gateway startup"),
+            ("good_count_total", "Products predicted good since gateway startup"),
+            ("fail_defect_count_total", "Products predicted defective since gateway startup"),
+            ("fail_different_count_total", "Products predicted different since gateway startup"),
+            ("reject_confirmed_total", "Confirmed rejections since gateway startup"),
+            ("reject_timeout_total", "Reject confirmation failures since gateway startup"),
+            ("feedback_count_total", "Human feedback responses since gateway startup"),
+            ("ml_correction_count_total", "Human feedback corrections since gateway startup"),
         )
 
-        # ----------------------------------------------------
-        # Temperature alarm
-        # ----------------------------------------------------
-        device_config.discreteTagList.append(
-            DiscreteTagConfig(
-                name="temperature_alarm",
-                description="Temperature voltage threshold alarm",
-                readOnly=True,
-                arraySize=0,
-                state0="Normal",
-                state1="Alarm",
-                state2=None,
-                state3=None,
-                state4=None,
-                state5=None,
-                state6=None,
-                state7=None,
+        for name, description in total_number_tags:
+            self._add_number_tag(
+                device,
+                name,
+                description,
+                0,
+                1000000,
+                "products",
             )
+
+        self._add_number_tag(
+            device,
+            "last_cycle_time_seconds",
+            "Cycle time of the most recently finished product",
+            0,
+            86400,
+            "s",
+            fraction_digits=1,
+        )
+        self._add_number_tag(
+            device,
+            "average_cycle_time_seconds",
+            "Average completed-product cycle time since startup",
+            0,
+            86400,
+            "s",
+            fraction_digits=1,
         )
 
-        # ----------------------------------------------------
-        # Temperature event text
-        # ----------------------------------------------------
-        device_config.textTagList.append(
-            TextTagConfig(
-                name="last_temperature_event",
-                description="Latest AI2 and DO1 buzzer action",
-                readOnly=True,
-                arraySize=0,
-            )
-        )
-
-        # ----------------------------------------------------
-        # Overall system status
-        # ----------------------------------------------------
-        device_config.textTagList.append(
-            TextTagConfig(
-                name="system_status",
-                description="Overall gateway status",
-                readOnly=True,
-                arraySize=0,
-            )
-        )
-
-        node_config.deviceList.append(device_config)
+        node_config.deviceList.append(device)
         edge_config.node = node_config
 
         result, payload = converter.convertCreateorUpdateConfig(
             action=constant.ActionType["Delsert"],
             nodeId=self.settings.edgehub_node_id,
             config=edge_config,
-            heartbeat=int(self.settings.edgehub_protocol_heartbeat_seconds),
+            heartbeat=int(self.reporting_interval_seconds),
         )
+
         if not result:
             raise RuntimeError(
                 "Could not build EdgeHub tag configuration payload."
@@ -321,205 +519,149 @@ class EdgeHubPublisher:
         )
 
         print(
-            "EdgeHub tag configuration sent: "
-            "di2_button_live, fan_do0_state, button_press_count, "
-            "last_button_event, ai2_temperature_voltage, "
-            "buzzer_do1_state, temperature_alarm, "
-            "last_temperature_event, system_status"
+            "EdgeHub product-monitoring tag configuration sent."
         )
 
-    # ========================================================
-    # DATA HELPERS
-    # ========================================================
-    def _send_edge_data(
-        self,
-        edge_data: EdgeData,
-    ) -> bool:
-        """Convert EdgeData and send it to EdgeHub."""
+   
+    # One consolidated 60-second snapshot
+   
 
-        # Rate-limit live data publishes so we send at most once per
-        # `edgehub_protocol_heartbeat_seconds` (default: 60s). This prevents
-        # frequent publishes during noisy input updates and reduces IoT throttling.
-        now = time.monotonic()
-        publish_interval = float(self.settings.edgehub_protocol_heartbeat_seconds)
-        if now - self._last_data_publish_time < publish_interval:
-            # Skipping publish because it would exceed the configured rate limit.
+    def publish_monitoring_snapshot(
+        self,
+        snapshot: dict[str, Any],
+        now: float | None = None,
+    ) -> bool:
+       
+        if now is None:
+            now = time.monotonic()
+
+        if not self.data_publish_due(now):
             return False
 
-        # Ensure the protocol heartbeat is maintained before sending data
-        self._send_protocol_heartbeat()
+        if not self.client.connected:
+            print("EdgeHub snapshot skipped: client is disconnected.")
+            return False
 
-        edge_data.timestamp = datetime.now()
+        try:
+            self._send_protocol_heartbeat()
 
-        result, payloads = converter.convertData(edge_data)
+            edge_data = EdgeData()
+            edge_data.timestamp = datetime.now()
 
-        if not result:
+            text_tags = (
+                "current_product_id",
+                "process_state",
+                "last_product_event",
+                "last_completed_product_id",
+                "classification_status",
+                "ml_prediction",
+                "feedback_product_id",
+                "feedback_status",
+                "actual_class",
+                "last_alarm_message",
+            )
+
+            boolean_tags = (
+                "adam_connected",
+                "camera_available",
+                "product_in_progress",
+                "feedback_received",
+                "ml_prediction_correct",
+                "product_at_camera_now",
+                "completion_sensor_active_now",
+                "reject_fan_on",
+                "buzzer_on",
+                "alarm_active",
+                "last_reject_confirmed",
+                "button_triggered_60s",
+                "photocell_triggered_60s",
+                "completion_detected_60s",
+                "reject_impact_detected_60s",
+                "fan_activated_60s",
+                "buzzer_activated_60s",
+            )
+
+            number_tags = (
+                "ml_confidence_percent",
+                "products_started_60s",
+                "products_inspected_60s",
+                "products_completed_60s",
+                "products_rejected_60s",
+                "reject_timeouts_60s",
+                "feedback_count_60s",
+                "inspection_count_total",
+                "good_count_total",
+                "fail_defect_count_total",
+                "fail_different_count_total",
+                "reject_confirmed_total",
+                "reject_timeout_total",
+                "feedback_count_total",
+                "ml_correction_count_total",
+                "last_cycle_time_seconds",
+                "average_cycle_time_seconds",
+            )
+
+            for tag_name in text_tags:
+                edge_data.tagList.append(
+                    EdgeTag(
+                        self.settings.edgehub_device_id,
+                        tag_name,
+                        str(snapshot.get(tag_name, "")),
+                    )
+                )
+
+            for tag_name in boolean_tags:
+                edge_data.tagList.append(
+                    EdgeTag(
+                        self.settings.edgehub_device_id,
+                        tag_name,
+                        int(bool(snapshot.get(tag_name, False))),
+                    )
+                )
+
+            for tag_name in number_tags:
+                value = snapshot.get(tag_name, 0)
+
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    numeric_value = 0.0
+
+                edge_data.tagList.append(
+                    EdgeTag(
+                        self.settings.edgehub_device_id,
+                        tag_name,
+                        numeric_value,
+                    )
+                )
+
+            result, payloads = converter.convertData(edge_data)
+
+            if not result:
+                print(
+                    "Could not convert the EdgeHub monitoring snapshot."
+                )
+                return False
+
+            for payload in payloads:
+                self._send_edgehub_message(
+                    message_type="data",
+                    payload=payload,
+                )
+
+            self._last_data_publish_time = now
+
             print(
-                "Could not convert EdgeHub tag data into payload."
+                "EdgeHub 60-second monitoring snapshot sent -> "
+                f"state={snapshot.get('process_state')}, "
+                f"product={snapshot.get('current_product_id') or 'none'}, "
+                f"started={snapshot.get('products_started_60s', 0)}, "
+                f"inspected={snapshot.get('products_inspected_60s', 0)}, "
+                f"completed={snapshot.get('products_completed_60s', 0)}, "
+                f"rejected={snapshot.get('products_rejected_60s', 0)}"
             )
-            return False
-
-        for payload in payloads:
-            self._send_edgehub_message(
-                message_type="data",
-                payload=payload,
-            )
-
-        # Mark the time we actually sent live data
-        self._last_data_publish_time = now
-
-        return True
-
-    # ========================================================
-    # LIVE DATA PUBLISHING — BUTTON + FAN
-    # ========================================================
-    def publish_button_fan(
-        self,
-        button_pressed: bool,
-        fan_on: bool,
-        button_press_count: int,
-        last_event: str,
-    ) -> bool:
-        """Upload DI2 button and DO0 fan states."""
-
-        try:
-            edge_data = EdgeData()
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "di2_button_live",
-                    int(button_pressed),
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "fan_do0_state",
-                    int(fan_on),
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "button_press_count",
-                    button_press_count,
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "last_button_event",
-                    last_event,
-                )
-            )
-
-            return self._send_edge_data(edge_data)
+            return True
 
         except Exception as error:
-            print(f"EdgeHub button/fan publish error: {error}")
+            print(f"EdgeHub snapshot publish error: {error}")
             return False
-
-    # Backward compatibility with your older service code.
-    def publish(
-        self,
-        button_pressed: bool,
-        fan_on: bool,
-        button_press_count: int,
-        last_event: str,
-    ) -> bool:
-        return self.publish_button_fan(
-            button_pressed=button_pressed,
-            fan_on=fan_on,
-            button_press_count=button_press_count,
-            last_event=last_event,
-        )
-
-    # ========================================================
-    # LIVE DATA PUBLISHING — TEMPERATURE + BUZZER
-    # ========================================================
-    def publish_temperature_buzzer(
-        self,
-        ai2_voltage: float,
-        buzzer_on: bool,
-        temperature_alarm: bool,
-        last_event: str,
-        system_status: str,
-    ) -> bool:
-        """Upload AI2 voltage and DO1 buzzer states."""
-
-        try:
-            edge_data = EdgeData()
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "ai2_temperature_voltage",
-                    round(ai2_voltage, 3),
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "buzzer_do1_state",
-                    int(buzzer_on),
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "temperature_alarm",
-                    int(temperature_alarm),
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "last_temperature_event",
-                    last_event,
-                )
-            )
-
-            edge_data.tagList.append(
-                EdgeTag(
-                    self.settings.edgehub_device_id,
-                    "system_status",
-                    system_status,
-                )
-            )
-
-            return self._send_edge_data(edge_data)
-
-        except Exception as error:
-            print(f"EdgeHub temperature/buzzer publish error: {error}")
-            return False
-
-    # Backward-compatible method for the old ButtonFanService.
-    def publish(
-        self,
-        button_pressed: bool,
-        fan_on: bool,
-        button_press_count: int,
-        last_event: str,
-    ) -> bool:
-        return self.publish_system_status(
-            system_state="LEGACY_BUTTON_FAN",
-            last_event=last_event,
-            product_count=button_press_count,
-            good_count=0,
-            faulty_count=0,
-            last_result="",
-            queue_summary="legacy service",
-            alarm_active=False,
-            camera_sensor=False,
-            end_sensor=False,
-            button_pressed=button_pressed,
-            conveyor_on=fan_on,
-            temperature_c=None,
-        )

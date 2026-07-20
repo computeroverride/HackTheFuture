@@ -1,11 +1,5 @@
 class ProductDetectorAI2:
-    """
-    Conveyor belt product detector.
-
-    Function:
-    - Reads analog sensor on AI2.
-    - Converts voltage into product detected boolean.
-    """
+  
 
     def __init__(
         self,

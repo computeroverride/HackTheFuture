@@ -2,13 +2,7 @@ import time
 
 
 class EntryButton:
-    """
-    Entry zone button.
-
-    Function:
-    - Reads DI2 button.
-    - When pressed, generates a unique product ID.
-    """
+   
 
     def __init__(self, adam, settings):
         self.adam = adam

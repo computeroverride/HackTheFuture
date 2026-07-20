@@ -1,1 +1,38 @@
-{}
+{
+  "-1003743219870:67": {
+    "product_id": 1784545604,
+    "predicted_label": "fail_uncertain",
+    "confidence": 0.49195459485054016,
+    "image_path": "D:\\hackthefuture\\storage\\failures\\P1784545604_20260720_190650.jpg",
+    "telegram_chat_id": "-1003743219870",
+    "telegram_message_id": 67,
+    "sent_at_utc": "2026-07-20T11:06:53.052480+00:00"
+  },
+  "-1003743219870:73": {
+    "product_id": 1784548475,
+    "predicted_label": "good",
+    "confidence": 0.7261461019515991,
+    "image_path": "D:\\hackthefuture\\storage\\predictions\\pass\\P1784548475_20260720_195441.jpg",
+    "telegram_chat_id": "-1003743219870",
+    "telegram_message_id": 73,
+    "sent_at_utc": "2026-07-20T11:54:43.386213+00:00"
+  },
+  "-1003743219870:76": {
+    "product_id": 1784548515,
+    "predicted_label": "good",
+    "confidence": 0.7386243343353271,
+    "image_path": "D:\\hackthefuture\\storage\\predictions\\pass\\P1784548515_20260720_195525.jpg",
+    "telegram_chat_id": "-1003743219870",
+    "telegram_message_id": 76,
+    "sent_at_utc": "2026-07-20T11:55:27.812602+00:00"
+  },
+  "-1003743219870:79": {
+    "product_id": 1784548556,
+    "predicted_label": "fail_uncertain",
+    "confidence": 0.5194683074951172,
+    "image_path": "D:\\hackthefuture\\storage\\failures\\P1784548556_20260720_195604.jpg",
+    "telegram_chat_id": "-1003743219870",
+    "telegram_message_id": 79,
+    "sent_at_utc": "2026-07-20T11:56:06.515514+00:00"
+  }
+}

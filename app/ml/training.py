@@ -40,9 +40,7 @@ EXPECTED_CLASSES = {
 
 
 class ImageSubset(Dataset):
-    """
-    Allows the training and validation subsets to use different transforms.
-    """
+   
 
     def __init__(
         self,
@@ -72,10 +70,7 @@ def make_stratified_split(
     val_ratio: float,
     seed: int,
 ) -> tuple[list[int], list[int]]:
-    """
-    Split each class separately so every class appears in training
-    and validation.
-    """
+   
 
     if not 0.0 < val_ratio < 1.0:
         raise ValueError("val_ratio must be between 0 and 1")
@@ -132,12 +127,7 @@ def run_epoch(
     device: torch.device,
     optimizer: torch.optim.Optimizer | None = None,
 ) -> tuple[float, float]:
-    """
-    Run either one training epoch or one validation epoch.
-
-    optimizer provided: training
-    optimizer omitted: validation
-    """
+   
 
     is_training = optimizer is not None
     model.train(is_training)

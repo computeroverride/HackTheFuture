@@ -17,17 +17,7 @@ def build_model(
     pretrained: bool = True,
     fine_tune_last_blocks: int = 2,
 ) -> nn.Module:
-    """
-    Create an EfficientNet-B0 classifier.
-
-    During training:
-    - Uses pretrained ImageNet weights.
-    - Freezes most of the model.
-    - Fine-tunes the final feature blocks and classifier.
-
-    During inference:
-    - pretrained=False because the trained checkpoint is loaded.
-    """
+    
 
     if num_classes < 2:
         raise ValueError("num_classes must be at least 2")
@@ -70,9 +60,7 @@ def get_train_transform() -> transforms.Compose:
     )
 
 def get_eval_transform() -> transforms.Compose:
-    """
-    Fixed preprocessing used for validation, testing and webcam inference.
-    """
+   
 
     return transforms.Compose(
         [

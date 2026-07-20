@@ -26,6 +26,25 @@ DEFAULT_FAILURE_DIR = (
 )
 
 
+def open_camera(camera_index: int = 0):
+    for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]:
+        for index in [camera_index, 0, 1, 2]:
+            capture = cv2.VideoCapture(index, backend)
+            if not capture.isOpened():
+                continue
+
+            success, _ = capture.read()
+            if success:
+                return capture
+
+            capture.release()
+
+    raise RuntimeError(
+        "Could not open or read from webcam. "
+        f"Tried camera index {camera_index} with available OpenCV backends."
+    )
+
+
 class PillInspector:
     def __init__(
         self,
@@ -48,10 +67,7 @@ class PillInspector:
 
         self.failure_dir = Path(failure_dir)
 
-        self.camera = cv2.VideoCapture(
-    camera_index,
-    cv2.CAP_DSHOW,
-)
+        self.camera = open_camera(camera_index)
 
         if not self.camera.isOpened():
             raise RuntimeError(

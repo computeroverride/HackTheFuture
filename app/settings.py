@@ -53,6 +53,13 @@ class Settings:
     buzzer_on_voltage: float
     buzzer_off_voltage: float
 
+    # Telegram
+
+    telegram_enabled: bool
+    telegram_bot_token: str
+    telegram_chat_id: str
+    telegram_feedback_chat_id: str
+
     # EdgeHub
 
     edgehub_enabled: bool
@@ -203,6 +210,21 @@ def load_settings() -> Settings:
         buzzer_off_voltage=_get_float(
             "BUZZER_OFF_VOLTAGE",
             "2.80",
+        ),
+
+        # Telegram
+        telegram_enabled=telegram_enabled,
+        telegram_bot_token=_get_optional(
+            "TELEGRAM_BOT_TOKEN",
+            "",
+        ),
+        telegram_chat_id=_get_optional(
+            "TELEGRAM_CHAT_ID",
+            "",
+        ),
+        telegram_feedback_chat_id=_get_optional(
+            "TELEGRAM_FEEDBACK_CHAT_ID",
+            "",
         ),
 
         # EdgeHub

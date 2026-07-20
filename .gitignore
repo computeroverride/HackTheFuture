@@ -8,3 +8,5 @@ storage/datasets/fail_different/
 storage/datasets/pass/
 storage/failures/
 storage/test/*
+tests/test_images/*
+test_webcam*

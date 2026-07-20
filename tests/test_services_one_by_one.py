@@ -1,4 +1,11 @@
+import os
+import sys
 import time
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.adam import Adam6717Connection
 from app.settings import load_settings
@@ -109,8 +116,11 @@ def main() -> None:
 
             sound_voltage = motor_sound.read_sound_value()
 
+            threshold_voltage = float(
+                os.getenv("SOUND_TRIGGER_THRESHOLD_VOLTAGE", "0.2")
+            )
             motor_sound_active = motor_sound.is_motor_loud(
-                threshold_voltage=0.2,
+                threshold_voltage=threshold_voltage,
             )
 
             if motor_sound_active:
@@ -158,6 +168,7 @@ def main() -> None:
 
             print("MOTOR AREA")
             print(f"Sound AI0 voltage: {sound_voltage:.3f} V")
+            print(f"Threshold: {threshold_voltage:.3f} V")
             print(f"Motor sound active: {motor_sound_active}")
             print(f"Fan relay DO0 is ON: {fan_on}")
 

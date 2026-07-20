@@ -41,6 +41,10 @@ class EdgeHubPublisher:
         self.client.on_connection_state_change = self._on_connection_state_change
         self.last_protocol_heartbeat_time = 0.0
         self.connected = False
+        # track previous connection state to avoid repeated identical logs
+        self._prev_connected_state: bool | None = None
+        # track last time live data was actually published to EdgeHub
+        self._last_data_publish_time = 0.0
 
     # Connection
     def _on_connection_state_change(
@@ -48,11 +52,15 @@ class EdgeHubPublisher:
         *args,
         **kwargs,
     ) -> None:
-        self.connected = self.client.connected
-        if self.connected:
-            print("EdgeHub Azure IoT connection established.")
-        else:
-            print("EdgeHub Azure IoT connection lost.")
+        # Only print when the connection state actually changes to avoid flooding
+        new_state = bool(self.client.connected)
+        if self._prev_connected_state is None or new_state != self._prev_connected_state:
+            self.connected = new_state
+            if self.connected:
+                print("EdgeHub Azure IoT connection established.")
+            else:
+                print("EdgeHub Azure IoT connection lost.")
+            self._prev_connected_state = new_state
 
     def connect_and_upload_tags(self) -> None:
         """
@@ -329,6 +337,16 @@ class EdgeHubPublisher:
     ) -> bool:
         """Convert EdgeData and send it to EdgeHub."""
 
+        # Rate-limit live data publishes so we send at most once per
+        # `edgehub_protocol_heartbeat_seconds` (default: 60s). This prevents
+        # frequent publishes during noisy input updates and reduces IoT throttling.
+        now = time.monotonic()
+        publish_interval = float(self.settings.edgehub_protocol_heartbeat_seconds)
+        if now - self._last_data_publish_time < publish_interval:
+            # Skipping publish because it would exceed the configured rate limit.
+            return False
+
+        # Ensure the protocol heartbeat is maintained before sending data
         self._send_protocol_heartbeat()
 
         edge_data.timestamp = datetime.now()
@@ -346,6 +364,9 @@ class EdgeHubPublisher:
                 message_type="data",
                 payload=payload,
             )
+
+        # Mark the time we actually sent live data
+        self._last_data_publish_time = now
 
         return True
 

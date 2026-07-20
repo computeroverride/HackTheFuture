@@ -67,7 +67,6 @@ class Adam6717Connection:
         return bool(result.bits[0])
 
     def write_do(self, address: int, value: bool) -> None:
-    def write_do(self, address: int, value: bool) -> None:
         result = self.client.write_coil(
             address=address,
             value=value,

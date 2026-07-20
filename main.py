@@ -3,6 +3,7 @@ import time
 from app.adam import Adam6717Connection
 from app.edgehub import EdgeHubPublisher
 from app.settings import load_settings
+from app.services.pill_inspector import InspectionService
 
 
 def main() -> None:
@@ -10,17 +11,11 @@ def main() -> None:
 
     adam = Adam6717Connection(settings)
     edgehub = None
+    services = []
 
     try:
-        # ----------------------------------------------------
-        # 1. Connect to physical ADAM hardware.
-        # ----------------------------------------------------
         adam.connect()
 
-        # ----------------------------------------------------
-        # 2. Connect to EdgeHub.
-        #    ADAM control still works if EdgeHub is offline.
-        # ----------------------------------------------------
         if settings.edgehub_enabled:
             try:
                 edgehub = EdgeHubPublisher(settings)
@@ -34,12 +29,21 @@ def main() -> None:
                 print(f"EdgeHub connection error: {error}")
                 edgehub = None
 
-        # ----------------------------------------------------
-        # 3. Services have been removed.
-        #    Thermistor / AI2 service removed.
-        # ----------------------------------------------------
+        inspection_service = InspectionService(
+            settings=settings,
+            adam=adam,
+            edgehub=edgehub,
+        )
 
-        print()
+        services = [
+            inspection_service,
+        ]
+
+        
+        for service in services:
+            service.start()
+
+         print()
         print("CMIO gateway is running.")
         print("DI2 button controls DO0 fan.")
         print("Thermistor AI2 has been removed from this project.")
@@ -47,7 +51,7 @@ def main() -> None:
         print()
 
         # ----------------------------------------------------
-        # 4. Central loop.
+        # 5. The ONE central infinite loop in the project.
         # ----------------------------------------------------
         while True:
             time.sleep(settings.poll_interval_seconds)
@@ -58,14 +62,10 @@ def main() -> None:
         print("DO0 fan remains in its current state.")
 
     finally:
-        # Turn buzzer off on exit just in case.
-        # write_do1() still points to physical DO2 if DO1_ADDRESS=18.
         try:
             adam.write_do1(False)
         except Exception:
             pass
-
-        adam.close()
 
         if edgehub is not None:
             try:

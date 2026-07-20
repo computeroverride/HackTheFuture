@@ -35,6 +35,7 @@ class Adam6717Connection:
     def read_di(self, address: int) -> bool:
         result = self.client.read_coils(
             address=address,
+            address=address,
             count=1,
             device_id=self.settings.adam_slave_id,
         )
@@ -53,6 +54,7 @@ class Adam6717Connection:
     def read_do(self, address: int) -> bool:
         result = self.client.read_coils(
             address=address,
+            address=address,
             count=1,
             device_id=self.settings.adam_slave_id,
         )
@@ -64,6 +66,7 @@ class Adam6717Connection:
 
         return bool(result.bits[0])
 
+    def write_do(self, address: int, value: bool) -> None:
     def write_do(self, address: int, value: bool) -> None:
         result = self.client.write_coil(
             address=address,

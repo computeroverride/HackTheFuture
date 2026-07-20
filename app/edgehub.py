@@ -16,7 +16,6 @@ from edgesync360edgehubedgesdk.Model.Edge import (
     NodeConfig,
     TextTagConfig,
 )
-
 from edgesync360edgehubedgesdk.Model.MQTTMessage import (
     ConnectMessage,
     DisconnectMessage,
@@ -36,15 +35,10 @@ class EdgeHubPublisher:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-
         self.client = IoTHubDeviceClient.create_from_sastoken(
             settings.edgehub_sas_token
         )
-
-        self.client.on_connection_state_change = (
-            self._on_connection_state_change
-        )
-
+        self.client.on_connection_state_change = self._on_connection_state_change
         self.last_protocol_heartbeat_time = 0.0
         self.connected = False
 
@@ -57,7 +51,6 @@ class EdgeHubPublisher:
         **kwargs,
     ) -> None:
         self.connected = self.client.connected
-
         if self.connected:
             print("EdgeHub Azure IoT connection established.")
         else:
@@ -70,11 +63,8 @@ class EdgeHubPublisher:
         """
 
         self.client.connect()
-
         if not self.client.connected:
-            raise ConnectionError(
-                "Could not connect to EdgeHub using the SCADA SAS token."
-            )
+            raise ConnectionError("Could not connect to EdgeHub using the SCADA SAS token.")
 
         self.connected = True
 
@@ -86,27 +76,17 @@ class EdgeHubPublisher:
         self._send_protocol_heartbeat(force=True)
 
         self.upload_tag_configuration()
-
-        print(
-            "EdgeHub ready. "
-            f"Node ID: {self.settings.edgehub_node_id}"
-        )
+        print(f"EdgeHub ready. Node ID: {self.settings.edgehub_node_id}")
 
     def disconnect(self) -> None:
         """Tell EdgeHub the gateway is stopping, then disconnect."""
 
         try:
             if self.client.connected:
-                self._send_edgehub_message(
-                    message_type="conn",
-                    payload=DisconnectMessage().getJson(),
-                )
-
+                self._send_edgehub_message("conn", DisconnectMessage().getJson())
                 self.client.disconnect()
-
         except Exception as error:
             print(f"EdgeHub disconnect warning: {error}")
-
         finally:
             self.connected = False
 
@@ -131,7 +111,6 @@ class EdgeHubPublisher:
 
         azure_message = Message(payload)
         azure_message.custom_properties[message_type] = ""
-
         self.client.send_message(azure_message)
 
     def _send_protocol_heartbeat(
@@ -141,20 +120,13 @@ class EdgeHubPublisher:
         """Keep the logical SCADA gateway online in EdgeHub."""
 
         now = time.monotonic()
-
         heartbeat_due = (
             now - self.last_protocol_heartbeat_time
             >= self.settings.edgehub_protocol_heartbeat_seconds
         )
-
         if not force and not heartbeat_due:
             return
-
-        self._send_edgehub_message(
-            message_type="conn",
-            payload=HeartbeatMessage().getJson(),
-        )
-
+        self._send_edgehub_message("conn", HeartbeatMessage().getJson())
         self.last_protocol_heartbeat_time = now
 
     # ========================================================
@@ -167,14 +139,10 @@ class EdgeHubPublisher:
         """
 
         edge_config = EdgeConfig()
-
-        node_config = NodeConfig(
-            nodeType=constant.EdgeType["Gateway"]
-        )
-
+        node_config = NodeConfig(nodeType=constant.EdgeType["Gateway"])
         device_config = DeviceConfig(
             id=self.settings.edgehub_device_id,
-            name="ADAM-6717 I/O",
+            name="ADAM-6717 Conveyor I/O",
             deviceType="ADAM-6717",
             description=(
                 "Python gateway for ADAM-6717 DI, DO and AI data"
@@ -338,11 +306,8 @@ class EdgeHubPublisher:
             action=constant.ActionType["Delsert"],
             nodeId=self.settings.edgehub_node_id,
             config=edge_config,
-            heartbeat=int(
-                self.settings.edgehub_protocol_heartbeat_seconds
-            ),
+            heartbeat=int(self.settings.edgehub_protocol_heartbeat_seconds),
         )
-
         if not result:
             raise RuntimeError(
                 "Could not build EdgeHub tag configuration payload."
@@ -519,3 +484,27 @@ class EdgeHubPublisher:
         except Exception as error:
             print(f"EdgeHub temperature/buzzer publish error: {error}")
             return False
+
+    # Backward-compatible method for the old ButtonFanService.
+    def publish(
+        self,
+        button_pressed: bool,
+        fan_on: bool,
+        button_press_count: int,
+        last_event: str,
+    ) -> bool:
+        return self.publish_system_status(
+            system_state="LEGACY_BUTTON_FAN",
+            last_event=last_event,
+            product_count=button_press_count,
+            good_count=0,
+            faulty_count=0,
+            last_result="",
+            queue_summary="legacy service",
+            alarm_active=False,
+            camera_sensor=False,
+            end_sensor=False,
+            button_pressed=button_pressed,
+            conveyor_on=fan_on,
+            temperature_c=None,
+        )

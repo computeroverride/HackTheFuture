@@ -11,7 +11,6 @@ ENV_PATH = PROJECT_ROOT / ".env"
 
 @dataclass
 class Settings:
-    # ========================================================
     # ADAM-6717
     # ========================================================
 
@@ -53,6 +52,11 @@ class Settings:
     # LOOP SETTINGS
     # ========================================================
 
+    # Optional analog input for temperature
+    ai_temperature_address: int
+    temperature_enabled: bool
+
+    # Timing / control
     poll_interval_seconds: float
     debounce_seconds: float
     publish_heartbeat_seconds: float
@@ -154,6 +158,8 @@ def load_settings() -> Settings:
         "DO1_ADDRESS",
         str(do2_address),
     )
+
+    telegram_enabled = parse_bool(os.getenv("TELEGRAM_ENABLED", "false"))
 
     return Settings(
         # ADAM

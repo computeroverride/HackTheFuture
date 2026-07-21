@@ -34,5 +34,14 @@
     "telegram_chat_id": "-1003743219870",
     "telegram_message_id": 79,
     "sent_at_utc": "2026-07-20T11:56:06.515514+00:00"
+  },
+  "-1003743219870:160": {
+    "product_id": 1784641506,
+    "predicted_label": "fail_uncertain",
+    "confidence": 0.4123099744319916,
+    "image_path": "C:\\Local_Git_Repository\\HackTheFuture\\storage\\failures\\P1784641506_20260721_214525.jpg",
+    "telegram_chat_id": "-1003743219870",
+    "telegram_message_id": 160,
+    "sent_at_utc": "2026-07-21T13:45:27.914291+00:00"
   }
 }

@@ -89,6 +89,7 @@ class ConveyorController:
         self.completion_sensor_active_now = False
         self.reject_fan_on = False
         self.buzzer_on = False
+        self.buzzer_pending_product_id = ""
 
         self.classification_status = "PENDING"
         self.ml_prediction = ""
@@ -304,8 +305,15 @@ class ConveyorController:
                                 "waiting for completion sensor"
                             )
                         else:
-                            set_buzzer(self, False)
                             set_fan(self, True)
+
+                            if self.ml_prediction == "fail_uncertain":
+                                set_buzzer(self, True)
+                                self.buzzer_pending_product_id = (
+                                    self.current_product_id
+                                )
+                            else:
+                                set_buzzer(self, False)
                             self.process_state = "REJECTING"
                             self.reject_started_at = now
                             self.reject_sound_previous = sound_activated
@@ -355,7 +363,14 @@ class ConveyorController:
                             self.reject_confirmed_total += 1
                             self.last_reject_confirmed = True
                             set_fan(self, False)
-                            set_buzzer(self, False)
+
+                            awaiting_feedback = (
+                                self.buzzer_pending_product_id != ""
+                                and self.buzzer_pending_product_id
+                                == self.current_product_id
+                            )
+                            if not awaiting_feedback:
+                                set_buzzer(self, False)
 
                             product_id = self.current_product_id
                             print(
@@ -390,7 +405,6 @@ class ConveyorController:
                             )
 
                             set_fan(self, False)
-                            set_buzzer(self, True)
 
                             product_id = self.current_product_id
                             print(
@@ -430,30 +444,31 @@ class ConveyorController:
             print("Stopped by user.")
 
         finally:
-            try:
-                self.fan_relay.turn_off()
-            except Exception:
-                pass
+            if self.adam_connected:
+                try:
+                    self.fan_relay.turn_off()
+                except (Exception, KeyboardInterrupt):
+                    pass
 
-            try:
-                self.buzzer.stop_buzzing()
-            except Exception:
-                pass
+                try:
+                    self.buzzer.stop_buzzing()
+                except (Exception, KeyboardInterrupt):
+                    pass
 
             try:
                 close_inspector = getattr(self.inspector, "close", None)
                 if callable(close_inspector):
                     close_inspector()
-            except Exception:
+            except (Exception, KeyboardInterrupt):
                 pass
 
             if self.edgehub is not None:
                 try:
                     self.edgehub.disconnect()
-                except Exception:
+                except (Exception, KeyboardInterrupt):
                     pass
 
             try:
                 self.adam.close()
-            except Exception:
+            except (Exception, KeyboardInterrupt):
                 pass

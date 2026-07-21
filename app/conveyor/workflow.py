@@ -75,6 +75,7 @@ def start_product(
 
     set_fan(controller, False)
     set_buzzer(controller, False)
+    controller.buzzer_pending_product_id = ""
 
     controller.alarm_active = False
     controller.last_alarm_message = ""

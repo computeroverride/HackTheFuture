@@ -10,6 +10,7 @@ from app.conveyor.helpers import (
     format_product_id,
     normalise_label,
 )
+from app.conveyor.workflow import set_buzzer
 from app.services.pill_inspector import PillInspector
 from integrations.telegram_notifier import TelegramNotifier
 
@@ -168,6 +169,13 @@ def poll_telegram_feedback(
                 f"Human feedback recorded for {product_id}: "
                 f"{actual_label}"
             )
+
+            if (
+                getattr(controller, "buzzer_pending_product_id", "")
+                == product_id
+            ):
+                set_buzzer(controller, False)
+                controller.buzzer_pending_product_id = ""
 
             print(
                 "Telegram feedback recorded for monitoring -> "

@@ -14,6 +14,7 @@ from app.conveyor.workflow import (
     set_buzzer,
     set_fan,
     start_product,
+    start_reject_sequence,
 )
 
 
@@ -94,6 +95,23 @@ def test_start_product_initialises_monitoring_state(
     assert controller.window.button_triggered is True
     assert controller.window.products_started == 1
     controller.notifier.send.assert_called_once()
+
+
+def test_start_reject_sequence_pulses_fan_and_resets_reject_state(
+    controller_factory,
+) -> None:
+    controller = controller_factory()
+    controller.reject_sound_peaked = True
+    controller.last_reject_confirmed = True
+
+    start_reject_sequence(controller, now=20.0)
+
+    controller.fan_relay.turn_on.assert_called_once_with()
+    assert controller.reject_fan_on is True
+    assert controller.process_state == "REJECT_PULSE"
+    assert controller.reject_pulse_started_at == 20.0
+    assert controller.reject_sound_peaked is False
+    assert controller.last_reject_confirmed is False
 
 
 def test_record_good_inspection_updates_counters(

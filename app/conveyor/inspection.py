@@ -6,11 +6,10 @@ from typing import Any
 
 from app.conveyor.helpers import (
     confidence_percent,
-    extract_product_number,
     format_product_id,
     normalise_label,
 )
-from app.conveyor.workflow import set_buzzer
+from app.conveyor.workflow import set_buzzer, start_reject_sequence
 from app.services.pill_inspector import PillInspector
 from integrations.telegram_notifier import TelegramNotifier
 
@@ -98,10 +97,9 @@ def notify_inspection_result(
     if controller.notifier is None:
         return
 
-    product_number = extract_product_number(product_id)
     saved_image = result.get("saved_image", result.get("image_path"))
 
-    if product_number is None or not saved_image:
+    if not product_id or not saved_image:
         controller.notifier.send(
             f"Inspection completed for {product_id}\n"
             f"ML prediction: {controller.ml_prediction}\n"
@@ -117,7 +115,7 @@ def notify_inspection_result(
 
     try:
         controller.notifier.send_inspection_result(
-            product_id=product_number,
+            product_id=product_id,
             predicted_label=controller.ml_prediction,
             confidence=float(result.get("confidence", 0.0)),
             image_path=image_path,
@@ -170,12 +168,30 @@ def poll_telegram_feedback(
                 f"{actual_label}"
             )
 
-            if (
+            awaiting_feedback_for_product = (
                 getattr(controller, "buzzer_pending_product_id", "")
                 == product_id
-            ):
+            )
+
+            if awaiting_feedback_for_product:
                 set_buzzer(controller, False)
                 controller.buzzer_pending_product_id = ""
+
+                if controller.process_state == "AWAITING_FEEDBACK":
+                    if actual_label == "good":
+                        controller.process_state = (
+                            "GOOD_AWAITING_COMPLETION"
+                        )
+                        controller.last_product_event = (
+                            f"{product_id} confirmed good by human "
+                            "feedback; waiting for completion sensor"
+                        )
+                    else:
+                        start_reject_sequence(controller, now)
+                        controller.last_product_event = (
+                            f"{product_id} confirmed {actual_label} by "
+                            "human feedback; activating reject fan"
+                        )
 
             print(
                 "Telegram feedback recorded for monitoring -> "

@@ -79,7 +79,7 @@ def test_notify_inspection_result_sends_available_image_for_any_class(
     notify_inspection_result(controller, "P021", result)
 
     notifier.send_inspection_result.assert_called_once_with(
-        product_id=21,
+        product_id="P021",
         predicted_label=prediction,
         confidence=0.91,
         image_path=image_path,
@@ -140,3 +140,50 @@ def test_poll_telegram_feedback_is_rate_limited(
     poll_telegram_feedback(controller, now=10.5)
 
     controller.notifier.get_feedback_messages.assert_not_called()
+
+
+def test_poll_telegram_feedback_routes_to_completion_when_confirmed_good(
+    controller_factory,
+) -> None:
+    controller = controller_factory()
+    controller._last_feedback_poll = 10.0
+    controller.process_state = "AWAITING_FEEDBACK"
+    controller.buzzer_pending_product_id = "P0004_1737558012"
+    controller.notifier.pop_feedback_events.return_value = [
+        {
+            "product_id": "P0004_1737558012",
+            "actual_label": "good",
+            "ml_correct": False,
+        }
+    ]
+
+    poll_telegram_feedback(controller, now=11.1)
+
+    controller.buzzer.stop_buzzing.assert_called_once_with()
+    assert controller.buzzer_pending_product_id == ""
+    assert controller.process_state == "GOOD_AWAITING_COMPLETION"
+
+
+def test_poll_telegram_feedback_routes_to_reject_pulse_when_confirmed_bad(
+    controller_factory,
+) -> None:
+    controller = controller_factory()
+    controller._last_feedback_poll = 10.0
+    controller.process_state = "AWAITING_FEEDBACK"
+    controller.buzzer_pending_product_id = "P0004_1737558012"
+    controller.notifier.pop_feedback_events.return_value = [
+        {
+            "product_id": "P0004_1737558012",
+            "actual_label": "defect",
+            "ml_correct": False,
+        }
+    ]
+
+    poll_telegram_feedback(controller, now=11.1)
+
+    controller.fan_relay.turn_on.assert_called_once_with()
+    assert controller.buzzer_pending_product_id == ""
+    assert controller.process_state == "REJECT_PULSE"
+    assert controller.reject_pulse_started_at == 11.1
+    assert controller.reject_sound_peaked is False
+    assert controller.last_reject_confirmed is False

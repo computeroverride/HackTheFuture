@@ -8,11 +8,11 @@ import pytest
 from app.conveyor.constants import AI_SCAN_ADDRESSES
 from app.conveyor.helpers import (
     confidence_percent,
-    derive_sound_activated,
     extract_product_number,
     format_product_id,
     normalise_label,
     read_ai_scan,
+    read_sound_voltage,
     refresh_current_outputs,
 )
 
@@ -60,6 +60,8 @@ def test_extract_product_number(
         ("P007", "P007"),
         ("PRODUCT-123", "P123"),
         ("manual-id", "manual-id"),
+        ("P0004_1737558012", "P0004_1737558012"),
+        ("P0004-1737558012", "P1737558012"),
     ],
 )
 def test_format_product_id(raw: object, expected: str) -> None:
@@ -85,8 +87,9 @@ def test_confidence_percent(
 def test_read_ai_scan_uses_the_required_address_sequence() -> None:
     adam = Mock()
     adam.read_ai_voltage.side_effect = lambda address: address / 10
+    settings = SimpleNamespace(ai4_address=38)
 
-    readings = read_ai_scan(adam)
+    readings = read_ai_scan(adam, settings)
 
     assert list(readings) == AI_SCAN_ADDRESSES
     assert readings[38] == 3.8
@@ -95,20 +98,21 @@ def test_read_ai_scan_uses_the_required_address_sequence() -> None:
     ]
 
 
-def test_derive_sound_activated_reuses_existing_scan_value() -> None:
+def test_read_sound_voltage_reuses_existing_scan_value() -> None:
     settings = SimpleNamespace(ai0_address=30)
     adam = Mock()
 
-    assert derive_sound_activated(settings, adam, {30: -0.21}) is True
+    assert read_sound_voltage(settings, adam, {30: 0.21}) == 0.21
     adam.read_ai_voltage.assert_not_called()
 
 
-def test_derive_sound_activated_reads_ai0_when_not_in_scan() -> None:
+def test_read_sound_voltage_reads_ai0_when_not_in_scan() -> None:
     settings = SimpleNamespace(ai0_address=44)
     adam = Mock()
     adam.read_ai_voltage.return_value = 0.19
 
-    assert derive_sound_activated(settings, adam, {}) is False
+    assert read_sound_voltage(settings, adam, {}) == 0.19
+    adam.read_ai_voltage.assert_called_once_with(44)
     adam.read_ai_voltage.assert_called_once_with(44)
 
 

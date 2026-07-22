@@ -63,6 +63,17 @@ def set_buzzer(controller: object, enabled: bool) -> None:
         controller.window.buzzer_activated = True
 
 
+def start_reject_sequence(controller: object, now: float) -> None:
+    # Pulse the fan/relay first; the sound sensor only starts listening
+    # for the reject-bin impact once the pulse finishes (see REJECT_PULSE
+    # handling in ConveyorController.run()).
+    set_fan(controller, True)
+    controller.process_state = "REJECT_PULSE"
+    controller.reject_pulse_started_at = now
+    controller.reject_sound_peaked = False
+    controller.last_reject_confirmed = False
+
+
 def start_product(
     controller: object,
     product_id: object,

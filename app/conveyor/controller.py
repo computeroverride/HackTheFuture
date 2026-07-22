@@ -14,15 +14,17 @@ from app.services.pill_inspector import PillInspector
 from integrations.telegram_notifier import TelegramNotifier
 from app.conveyor.constants import (
     EDGEHUB_REPORTING_INTERVAL_SECONDS,
-    PHOTOCELL_ADDRESS,
     PHOTOCELL_REARM_SECONDS,
     PHOTOCELL_THRESHOLD_VOLTAGE,
     REJECT_CONFIRM_TIMEOUT_SECONDS,
+    REJECT_FAN_PULSE_SECONDS,
+    REJECT_SOUND_HIGH_THRESHOLD_VOLTAGE,
+    REJECT_SOUND_LOW_THRESHOLD_VOLTAGE,
 )
 from app.conveyor.helpers import (
-    derive_sound_activated,
     format_product_id,
     read_ai_scan,
+    read_sound_voltage,
     refresh_current_outputs,
 )
 from app.conveyor.inspection import (
@@ -39,6 +41,7 @@ from app.conveyor.workflow import (
     set_buzzer,
     set_fan,
     start_product,
+    start_reject_sequence,
 )
 
 
@@ -79,13 +82,15 @@ class ConveyorController:
         self.current_product_id = ""
         self.current_result: dict[str, Any] | None = None
         self.product_started_at: float | None = None
+        self.reject_pulse_started_at: float | None = None
         self.reject_started_at: float | None = None
-        self.reject_sound_previous = False
+        self.reject_sound_peaked = False
 
         self.last_product_event = "System started"
         self.last_completed_product_id = ""
 
         self.product_at_camera_now = False
+        self.photocell_voltage = 0.0
         self.completion_sensor_active_now = False
         self.reject_fan_on = False
         self.buzzer_on = False
@@ -122,6 +127,7 @@ class ConveyorController:
         self._last_edgehub_window_started_at = time.monotonic()
         self._last_feedback_poll = time.monotonic()
         self._last_status_print = time.monotonic()
+        self._last_photocell_debug_print = time.monotonic()
 
     def connect(self) -> None:
         try:
@@ -199,8 +205,8 @@ class ConveyorController:
 
         if self.adam_connected:
             try:
-                readings = read_ai_scan(self.adam)
-                initial_photocell_voltage = readings[PHOTOCELL_ADDRESS]
+                readings = read_ai_scan(self.adam, self.settings)
+                initial_photocell_voltage = readings[self.settings.ai4_address]
                 photocell_armed = (
                     initial_photocell_voltage >= PHOTOCELL_THRESHOLD_VOLTAGE
                 )
@@ -232,12 +238,13 @@ class ConveyorController:
                             start_product(self, new_product_id, now)
 
                     try:
-                        readings = read_ai_scan(self.adam)
-                        photocell_voltage = readings[PHOTOCELL_ADDRESS]
+                        readings = read_ai_scan(self.adam, self.settings)
+                        photocell_voltage = readings[self.settings.ai4_address]
+                        self.photocell_voltage = photocell_voltage
                         self.product_at_camera_now = (
                             photocell_voltage < PHOTOCELL_THRESHOLD_VOLTAGE
                         )
-                        sound_activated = derive_sound_activated(
+                        sound_voltage = read_sound_voltage(
                             self.settings,
                             self.adam,
                             readings,
@@ -248,7 +255,7 @@ class ConveyorController:
                         refresh_current_outputs(self)
                     except Exception as error:
                         self._handle_adam_failure(error)
-                        sound_activated = False
+                        sound_voltage = 0.0
                         self.product_at_camera_now = False
                         self.completion_sensor_active_now = False
 
@@ -261,6 +268,18 @@ class ConveyorController:
                                 photocell_clear_started_at = None
                     else:
                         photocell_clear_started_at = None
+
+                    if (
+                        self.process_state == "WAITING_FOR_PHOTOCELL"
+                        and now - self._last_photocell_debug_print >= 0.5
+                    ):
+                        print(
+                            f"state={self.process_state} | "
+                            f"{self.photocell_voltage:.4f} V | "
+                            f"covered={self.product_at_camera_now} | "
+                            f"armed={photocell_armed}"
+                        )
+                        self._last_photocell_debug_print = now
 
                     if (
                         self.process_state == "WAITING_FOR_PHOTOCELL"
@@ -304,23 +323,38 @@ class ConveyorController:
                                 f"{self.current_product_id} passed; "
                                 "waiting for completion sensor"
                             )
+                        elif (
+                            self.ml_prediction == "fail_uncertain"
+                            and self.notifier is not None
+                        ):
+                            # Hold off on rejecting: let a human decide on
+                            # Telegram whether this is actually good or bad.
+                            set_fan(self, False)
+                            set_buzzer(self, True)
+                            self.buzzer_pending_product_id = (
+                                self.current_product_id
+                            )
+                            self.process_state = "AWAITING_FEEDBACK"
+                            self.last_product_event = (
+                                f"{self.current_product_id} uncertain; "
+                                "waiting for human feedback on Telegram"
+                            )
                         else:
-                            set_fan(self, True)
+                            set_buzzer(
+                                self,
+                                self.ml_prediction == "fail_uncertain",
+                            )
 
                             if self.ml_prediction == "fail_uncertain":
-                                set_buzzer(self, True)
                                 self.buzzer_pending_product_id = (
                                     self.current_product_id
                                 )
-                            else:
-                                set_buzzer(self, False)
-                            self.process_state = "REJECTING"
-                            self.reject_started_at = now
-                            self.reject_sound_previous = sound_activated
-                            self.last_reject_confirmed = False
+
+                            start_reject_sequence(self, now)
                             self.last_product_event = (
                                 f"{self.current_product_id} rejected; "
-                                "waiting for reject-bin impact"
+                                f"activating reject fan for "
+                                f"{REJECT_FAN_PULSE_SECONDS:.0f}s"
                             )
 
                     elif (
@@ -350,14 +384,30 @@ class ConveyorController:
                             f"Good completion confirmed for {product_id}",
                         )
 
-                    elif self.process_state == "REJECTING":
-                        impact_rising_edge = (
-                            sound_activated
-                            and not self.reject_sound_previous
-                        )
-                        self.reject_sound_previous = sound_activated
+                    elif self.process_state == "REJECT_PULSE":
+                        if (
+                            self.reject_pulse_started_at is not None
+                            and now - self.reject_pulse_started_at
+                            >= REJECT_FAN_PULSE_SECONDS
+                        ):
+                            set_fan(self, False)
+                            self.process_state = "REJECTING"
+                            self.reject_started_at = now
+                            self.last_product_event = (
+                                f"{self.current_product_id} reject pulse "
+                                "complete; listening for reject-bin impact"
+                            )
 
-                        if impact_rising_edge:
+                    elif self.process_state == "REJECTING":
+                        if sound_voltage >= REJECT_SOUND_HIGH_THRESHOLD_VOLTAGE:
+                            self.reject_sound_peaked = True
+
+                        impact_complete = (
+                            self.reject_sound_peaked
+                            and sound_voltage <= REJECT_SOUND_LOW_THRESHOLD_VOLTAGE
+                        )
+
+                        if impact_complete:
                             self.window.reject_impact_detected = True
                             self.window.products_rejected += 1
                             self.reject_confirmed_total += 1
@@ -435,9 +485,7 @@ class ConveyorController:
                     )
                     self._last_status_print = now
 
-                time.sleep(
-                    max(float(self.settings.poll_interval_seconds), 0.10)
-                )
+                time.sleep(float(self.settings.poll_interval_seconds))
 
         except KeyboardInterrupt:
             print()

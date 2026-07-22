@@ -16,7 +16,7 @@ def test_adam_connects_and_reads_product_monitoring_inputs() -> None:
 
     try:
         adam.connect()
-        readings = read_ai_scan(adam)
+        readings = read_ai_scan(adam, settings)
         crash_sensor = adam.read_di(settings.di0_address)
         entry_button = adam.read_di(settings.di2_address)
 

@@ -6,6 +6,7 @@ __pycache__/
 storage/datasets/fail_defect/
 storage/datasets/fail_different/
 storage/datasets/pass/
+storage/predictions/
 storage/failures/
 storage/test/*
 tests/test_images/*

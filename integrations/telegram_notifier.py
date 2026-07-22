@@ -318,7 +318,7 @@ class TelegramNotifier:
 
     @staticmethod
     def _feedback_keyboard(
-        product_id: int,
+        product_id: str,
     ) -> dict[str, object]:
     
         return {
@@ -348,7 +348,7 @@ class TelegramNotifier:
 
     @staticmethod
     def _correction_keyboard(
-        product_id: int,
+        product_id: str,
         predicted_label: str,
     ) -> dict[str, object]:
         rows: list[list[dict[str, str]]] = []
@@ -377,12 +377,12 @@ class TelegramNotifier:
 
     def send_inspection_result(
         self,
-        product_id: int,
+        product_id: str,
         predicted_label: str,
         confidence: float,
         image_path: Path,
     ) -> None:
-        
+
         predicted_label = predicted_label.strip().lower()
 
         # The three buttons record the ACTUAL class. Therefore an unusual
@@ -400,7 +400,7 @@ class TelegramNotifier:
 
         caption = (
             f"{icon} Product inspection result\n"
-            f"Product ID: P{product_id:03d}\n"
+            f"Product ID: {product_id}\n"
             f"ML prediction: {result_name}\n"
             f"Confidence: "
             f"{self._format_confidence(confidence)}\n"
@@ -466,7 +466,7 @@ class TelegramNotifier:
 
     def faulty_pill_detected(
         self,
-        product_id: int,
+        product_id: str,
         confidence: float,
         image_path: Path,
         predicted_label: str = "fail_defect",
@@ -540,9 +540,9 @@ class TelegramNotifier:
     def _rename_product_image(
         self,
         image_path: Path,
-        product_id: int,
+        product_id: str,
     ) -> Path:
-       
+
         image_path = Path(image_path)
 
         if not image_path.exists():
@@ -560,7 +560,7 @@ class TelegramNotifier:
             extension = ".jpg"
 
         new_filename = (
-            f"P{product_id:03d}_{timestamp}"
+            f"{product_id}_{timestamp}"
             f"{extension.lower()}"
         )
 
@@ -572,7 +572,7 @@ class TelegramNotifier:
 
         while new_path.exists() and new_path != image_path:
             new_filename = (
-                f"P{product_id:03d}_{timestamp}_{counter}"
+                f"{product_id}_{timestamp}_{counter}"
                 f"{extension.lower()}"
             )
             new_path = image_path.parent / new_filename
@@ -620,8 +620,8 @@ class TelegramNotifier:
             )
             return None
 
-        product_id = int(
-            pending.get("product_id", 0)
+        product_id = str(
+            pending.get("product_id", "unknown")
         )
         message_id = int(
             pending.get("telegram_message_id", 0)
@@ -649,7 +649,7 @@ class TelegramNotifier:
         )
 
         destination_path = destination_dir / (
-            f"P{product_id:03d}_"
+            f"{product_id}_"
             f"telegram_{message_id}_"
             f"{source_path.name}"
         )
@@ -684,21 +684,21 @@ class TelegramNotifier:
 
         self.incorrect_feedback_dir.mkdir(parents=True, exist_ok=True)
 
-        product_id = int(pending.get("product_id", 0))
+        product_id = str(pending.get("product_id", "unknown"))
         message_id = int(pending.get("telegram_message_id", 0))
         predicted_label = str(
             pending.get("predicted_label", "unknown")
         )
 
         destination_path = self.incorrect_feedback_dir / (
-            f"P{product_id:03d}_telegram_{message_id}_"
+            f"{product_id}_telegram_{message_id}_"
             f"predicted_{predicted_label}_{source_path.name}"
         )
 
         counter = 1
         while destination_path.exists():
             destination_path = self.incorrect_feedback_dir / (
-                f"P{product_id:03d}_telegram_{message_id}_{counter}_"
+                f"{product_id}_telegram_{message_id}_{counter}_"
                 f"predicted_{predicted_label}_{source_path.name}"
             )
             counter += 1
@@ -1144,14 +1144,12 @@ class TelegramNotifier:
 
         action, product_id_text, value = parts
 
-        try:
-            callback_product_id = int(
-                product_id_text
-            )
-            pending_product_id = int(
-                pending.get("product_id", -1)
-            )
-        except (TypeError, ValueError):
+        callback_product_id = product_id_text
+        pending_product_id = str(
+            pending.get("product_id", "")
+        )
+
+        if not callback_product_id:
             self._answer_callback(
                 callback_query_id,
                 "Invalid product ID.",

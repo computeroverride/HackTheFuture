@@ -43,5 +43,23 @@
     "telegram_chat_id": "-1003743219870",
     "telegram_message_id": 160,
     "sent_at_utc": "2026-07-21T13:45:27.914291+00:00"
+  },
+  "-1003743219870:207": {
+    "product_id": "P0001_1784700230",
+    "predicted_label": "fail_defect",
+    "confidence": 0.6838344931602478,
+    "image_path": "D:\\hackthefuture\\storage\\failures\\P0001_1784700230_20260722_140501.jpg",
+    "telegram_chat_id": "-1003743219870",
+    "telegram_message_id": 207,
+    "sent_at_utc": "2026-07-22T06:05:03.429168+00:00"
+  },
+  "-1003743219870:221": {
+    "product_id": "P0001_1784701950",
+    "predicted_label": "fail_different",
+    "confidence": 0.6297284960746765,
+    "image_path": "D:\\hackthefuture\\storage\\failures\\P0001_1784701950_20260722_143239.jpg",
+    "telegram_chat_id": "-1003743219870",
+    "telegram_message_id": 221,
+    "sent_at_utc": "2026-07-22T06:32:42.145839+00:00"
   }
 }

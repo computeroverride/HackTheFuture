@@ -32,7 +32,6 @@ class Settings:
     ai0_address: int
     ai2_address: int
     ai4_address: int
-    ai6_address: int
 
     # Camera
 
@@ -41,12 +40,8 @@ class Settings:
     camera_burst_gap_seconds: float
 
     # Loop
-    ai_temperature_address: int
-    temperature_enabled: bool
 
     poll_interval_seconds: float
-    debounce_seconds: float
-    publish_heartbeat_seconds: float
 
     # Buzzer
 
@@ -87,22 +82,16 @@ def _get_optional(name: str, default_value: str) -> str:
     return value.strip()
 
 
-def _get_int(name: str, default_value: str | None = None) -> int:
-    value = _get_optional(name, "") if default_value is None else _get_optional(name, default_value)
-    if value == "":
-        raise ValueError(f"Missing required .env value: {name}")
-    return int(value)
+def _get_int(name: str) -> int:
+    return int(_get_required(name))
 
 
-def _get_float(name: str, default_value: str | None = None) -> float:
-    value = _get_optional(name, "") if default_value is None else _get_optional(name, default_value)
-    if value == "":
-        raise ValueError(f"Missing required .env value: {name}")
-    return float(value)
+def _get_float(name: str) -> float:
+    return float(_get_required(name))
 
 
-def _get_bool(name: str, default_value: str) -> bool:
-    value = _get_optional(name, default_value).lower()
+def _get_bool(name: str) -> bool:
+    value = _get_required(name).lower()
 
     return value in [
         "true",
@@ -116,10 +105,7 @@ def _get_bool(name: str, default_value: str) -> bool:
 def load_settings() -> Settings:
     load_dotenv(ENV_PATH)
 
-    edgehub_enabled = _get_bool(
-        "EDGEHUB_ENABLED",
-        "false",
-    )
+    edgehub_enabled = _get_bool("EDGEHUB_ENABLED")
 
     edgehub_sas_token = _get_optional(
         "EDGEHUB_SAS_TOKEN",
@@ -147,10 +133,7 @@ def load_settings() -> Settings:
 
     do2_address = _get_int("DO2_ADDRESS")
 
-    telegram_enabled = _get_bool(
-        "TELEGRAM_ENABLED",
-        "false",
-    )
+    telegram_enabled = _get_bool("TELEGRAM_ENABLED")
 
     return Settings(
         # ADAM
@@ -170,47 +153,18 @@ def load_settings() -> Settings:
         ai0_address=_get_int("AI0_ADDRESS"),
         ai2_address=_get_int("AI2_ADDRESS"),
         ai4_address=_get_int("AI4_ADDRESS"),
-        ai6_address=_get_int("AI6_ADDRESS"),
 
         # Camera
-        camera_index=_get_int("CAMERA_INDEX", "0"),
-        camera_burst_count=_get_int("CAMERA_BURST_COUNT", "3"),
-        camera_burst_gap_seconds=_get_float(
-            "CAMERA_BURST_GAP_SECONDS",
-            "0.15",
-        ),
+        camera_index=_get_int("CAMERA_INDEX"),
+        camera_burst_count=_get_int("CAMERA_BURST_COUNT"),
+        camera_burst_gap_seconds=_get_float("CAMERA_BURST_GAP_SECONDS"),
 
         # Loop
-        ai_temperature_address=_get_int(
-            "AI_TEMPERATURE_ADDRESS",
-            "0",
-        ),
-        temperature_enabled=_get_bool(
-            "TEMPERATURE_ENABLED",
-            "false",
-        ),
-        poll_interval_seconds=_get_float(
-            "POLL_INTERVAL_SECONDS",
-            "0.05",
-        ),
-        debounce_seconds=_get_float(
-            "DEBOUNCE_SECONDS",
-            "0.20",
-        ),
-        publish_heartbeat_seconds=_get_float(
-            "PUBLISH_HEARTBEAT_SECONDS",
-            "3.0",
-        ),
+        poll_interval_seconds=_get_float("POLL_INTERVAL_SECONDS"),
 
         # Buzzer
-        buzzer_on_voltage=_get_float(
-            "BUZZER_ON_VOLTAGE",
-            "2.85",
-        ),
-        buzzer_off_voltage=_get_float(
-            "BUZZER_OFF_VOLTAGE",
-            "2.80",
-        ),
+        buzzer_on_voltage=_get_float("BUZZER_ON_VOLTAGE"),
+        buzzer_off_voltage=_get_float("BUZZER_OFF_VOLTAGE"),
 
         # Telegram
         telegram_enabled=telegram_enabled,
@@ -234,12 +188,8 @@ def load_settings() -> Settings:
             "",
         ),
         edgehub_sas_token=edgehub_sas_token,
-        edgehub_device_id=_get_optional(
-            "EDGEHUB_DEVICE_ID",
-            "ADAM6717_IO",
-        ),
+        edgehub_device_id=_get_required("EDGEHUB_DEVICE_ID"),
         edgehub_protocol_heartbeat_seconds=_get_int(
             "EDGEHUB_PROTOCOL_HEARTBEAT_SECONDS",
-            "60",
         ),
     )

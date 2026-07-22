@@ -34,14 +34,39 @@ DEFAULT_PASS_DIR = (
 
 
 def open_camera(camera_index: int = 0):
-    for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]:
-        for index in [camera_index, 0, 1, 2]:
+    backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+
+    for backend in backends:
+        capture = cv2.VideoCapture(camera_index, backend)
+        if capture.isOpened():
+            success, _ = capture.read()
+            if success:
+                return capture
+
+        capture.release()
+
+    print(
+        f"WARNING: Configured CAMERA_INDEX={camera_index} could not be opened "
+        "or read from. Falling back to other camera indices - verify "
+        "CAMERA_INDEX before trusting inspection results."
+    )
+
+    for backend in backends:
+        for index in [0, 1, 2]:
+            if index == camera_index:
+                continue
+
             capture = cv2.VideoCapture(index, backend)
             if not capture.isOpened():
+                capture.release()
                 continue
 
             success, _ = capture.read()
             if success:
+                print(
+                    f"WARNING: Opened fallback camera index {index} instead "
+                    f"of configured CAMERA_INDEX={camera_index}."
+                )
                 return capture
 
             capture.release()
@@ -76,13 +101,15 @@ class PillInspector:
         self.failure_dir = Path(failure_dir)
         self.pass_dir = Path(pass_dir)
 
-        self.camera = open_camera(camera_index)
+        self.camera_index = camera_index
 
-        if not self.camera.isOpened():
-            raise RuntimeError(
-                f"Could not open camera index "
-                f"{camera_index}"
-            )
+        # Fail fast if the camera can't be opened at all, but don't keep
+        # a handle open between inspections. A camera left open and idle
+        # between products can return stale, buffered frames instead of
+        # the live feed - opening fresh right before each capture (and
+        # closing right after) avoids that.
+        probe_camera = open_camera(camera_index)
+        probe_camera.release()
 
     @staticmethod
     def sharpness_score(frame) -> float:
@@ -101,28 +128,33 @@ class PillInspector:
         )
 
     def capture_sharpest_frame(self):
-        captured_frames = []
+        camera = open_camera(self.camera_index)
 
-        for _ in range(self.burst_count):
-            success, frame = self.camera.read()
+        try:
+            captured_frames = []
 
-            if not success:
-                raise RuntimeError(
-                    "Webcam frame capture failed"
+            for _ in range(self.burst_count):
+                success, frame = camera.read()
+
+                if not success:
+                    raise RuntimeError(
+                        "Webcam frame capture failed"
+                    )
+
+                captured_frames.append(frame.copy())
+
+                time.sleep(
+                    self.burst_delay_seconds
                 )
 
-            captured_frames.append(frame.copy())
-
-            time.sleep(
-                self.burst_delay_seconds
+            sharpest_frame = max(
+                captured_frames,
+                key=self.sharpness_score,
             )
 
-        sharpest_frame = max(
-            captured_frames,
-            key=self.sharpness_score,
-        )
-
-        return sharpest_frame
+            return sharpest_frame
+        finally:
+            camera.release()
 
     def inspect(
         self,
@@ -187,8 +219,9 @@ class PillInspector:
         return result
 
     def close(self) -> None:
-        if self.camera.isOpened():
-            self.camera.release()
+        # No persistent camera handle to release - each inspection opens
+        # and closes its own camera (see capture_sharpest_frame).
+        pass
 
     def __enter__(self):
         return self

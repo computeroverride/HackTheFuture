@@ -27,7 +27,7 @@ class EntryButton:
             timestamp = int(time.time())
 
             product_id = (
-                f"P{self.product_counter:04d}-"
+                f"P{self.product_counter:04d}_"
                 f"{timestamp}"
             )
 
